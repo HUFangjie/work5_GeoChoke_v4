@@ -1,6 +1,12 @@
 from __future__ import annotations
 from typing import Any, Callable
 
+
+
+def _ensure_default_registrations() -> None:
+    # Import for side effects: registers built-in components. Safe if already imported.
+    import factories.defaults  # noqa: F401
+
 DATASET_REGISTRY: dict[str, type] = {}
 
 def register_dataset(name: str) -> Callable[[type], type]:
@@ -12,6 +18,7 @@ def register_dataset(name: str) -> Callable[[type], type]:
     return decorator
 
 def create_dataset_provider(cfg: Any) -> Any:
+    _ensure_default_registrations()
     try:
         provider_cls = DATASET_REGISTRY[cfg.dataset_name]
     except KeyError as exc:

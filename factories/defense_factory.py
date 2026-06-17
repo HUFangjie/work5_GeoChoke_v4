@@ -1,6 +1,12 @@
 from __future__ import annotations
 from typing import Any, Callable
 
+
+
+def _ensure_default_registrations() -> None:
+    # Import for side effects: registers built-in components. Safe if already imported.
+    import factories.defaults  # noqa: F401
+
 DEFENSE_REGISTRY: dict[str, Callable[[Any], Any]] = {}
 
 def register_defense(name: str) -> Callable[[Callable[[Any], Any]], Callable[[Any], Any]]:
@@ -12,6 +18,7 @@ def register_defense(name: str) -> Callable[[Callable[[Any], Any]], Callable[[An
     return decorator
 
 def create_defense(cfg: Any, crypto_bundle: Any | None = None) -> Any:
+    _ensure_default_registrations()
     try:
         return DEFENSE_REGISTRY[cfg.defense_name](cfg)
     except KeyError as exc:
