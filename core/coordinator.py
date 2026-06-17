@@ -139,6 +139,12 @@ class FederatedCoordinator:
                 plaintext_reference_update=plaintext_reference_update,
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
+            self.logger.info(
+                "round=%s test_accuracy=%.6f test_loss=%.6f",
+                round_id,
+                test_accuracy,
+                test_loss,
+            )
             profile_cfg = self.cfg.ckks_profiles[profile_id]
             round_row = {
                 "round": round_id,
@@ -171,7 +177,6 @@ class FederatedCoordinator:
                         "attack_applied_before_encryption": upload.metadata["attack_applied_before_encryption"],
                     }
                 )
-            _write_csv(os.path.join(self.cfg.output_dir, f"round_{round_id}.csv"), [round_row])
         _write_csv(os.path.join(self.cfg.output_dir, "fl_ckks_geochoke_metrics.csv"), round_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
         return round_rows

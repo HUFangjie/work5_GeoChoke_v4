@@ -112,11 +112,10 @@ pytest -q
 
 ## Outputs
 
-The coordinator writes:
+The coordinator logs each round's test accuracy and writes:
 
 - `client_partitions.csv`: sample count, label distribution, malicious flag per client.
-- `round_<t>.csv`: per-round FL, CKKS, and GeoChoke metrics.
-- `fl_ckks_geochoke_metrics.csv`: all round metrics.
+- `fl_ckks_geochoke_metrics.csv`: unified per-round FL, CKKS, and GeoChoke metrics.
 - `attack_metrics.csv`: per-client attack norm/cosine/time metrics.
 - `crypto_calibration/direct_profile_calibration.csv`: per-profile direct CKKS residual MSE, max residual, relative L2, residual mean, and residual standard deviation.
 - `crypto_calibration/aggregation_pipeline_validation.csv`: full Enc → plaintext-weight multiply → ciphertext addition → aggregate decrypt validation metrics, including norm ratio.
