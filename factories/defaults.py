@@ -8,6 +8,7 @@ from crypto.ckks_backend import CKKSBackend
 from crypto.ckks_context_manager import CKKSContextManager
 from data.mnist import MNISTProvider
 from defenses.geochoke.defense import GeoChokeDefense
+from defenses.no_defense import NoDefense
 from factories.attack_factory import register_attack
 from factories.crypto_factory import CryptoBundle, register_crypto
 from factories.dataset_factory import register_dataset
@@ -45,3 +46,11 @@ def _create_ckks(cfg):
 @register_defense("geochoke")
 def _create_geochoke(cfg):
     return GeoChokeDefense(cfg.geochoke, cfg.ckks_profiles, device=cfg.device, output_dir=f"{cfg.output_dir}/crypto_calibration")
+
+@register_defense("none")
+def _create_no_defense(cfg):
+    return NoDefense(cfg.geochoke.initial_profile_id)
+
+@register_defense("no_defense")
+def _create_named_no_defense(cfg):
+    return NoDefense(cfg.geochoke.initial_profile_id)

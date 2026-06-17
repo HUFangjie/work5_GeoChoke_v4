@@ -79,3 +79,13 @@ def test_dummy_dataset_and_defense_registered_without_coordinator_changes():
     cfg.defense_name = "dummy_defense"
     assert isinstance(create_dataset_provider(cfg), DummyDatasetProvider)
     assert isinstance(create_defense(cfg), DummyDefense)
+
+
+def test_no_defense_factory_keeps_initial_profile():
+    cfg = ExperimentConfig(ckks_profiles=CKKS_PROFILES)
+    cfg.defense_name = "none"
+    defense = create_defense(cfg)
+    assert defense.get_profile_for_round(0) == cfg.geochoke.initial_profile_id
+    metrics = defense.after_aggregate(None, None, cfg.geochoke.initial_profile_id, 0)
+    assert metrics["defense_enabled"] is False
+    assert metrics["selected_next_profile"] == cfg.geochoke.initial_profile_id
