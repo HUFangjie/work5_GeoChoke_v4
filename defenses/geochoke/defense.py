@@ -12,10 +12,11 @@ from defenses.geochoke.controller import GeoChokeController
 
 
 class GeoChokeDefense(DefenseStrategy):
-    def __init__(self, cfg: Any, profiles: Mapping[str, dict[str, Any]], device: str = "cpu") -> None:
+    def __init__(self, cfg: Any, profiles: Mapping[str, dict[str, Any]], device: str = "cpu", output_dir: str | None = None) -> None:
         self.cfg = cfg
         self.profiles = dict(profiles)
         self.device = device
+        self.output_dir = output_dir
         self.next_profile = cfg.initial_profile_id
         self.history: list[dict[str, Any]] = []
 
@@ -29,6 +30,7 @@ class GeoChokeDefense(DefenseStrategy):
             decrypt_aggregate_fn,
             self.profiles,
             self.cfg,
+            output_dir=self.output_dir,
         ).calibrate(representative_vectors)
         self.estimator = CFIEstimator(self.codec, proxy_loader, self.perturbation_bank, self.device)
         self.controller = GeoChokeController(self.cfg, self.calibration)

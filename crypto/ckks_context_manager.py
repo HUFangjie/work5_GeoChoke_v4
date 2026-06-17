@@ -92,6 +92,11 @@ class CKKSContextManager:
         coeff_bits = [int(x) for x in cfg["coeff_mod_bit_sizes"]]
         if len(coeff_bits) < 3 or coeff_bits[0] > 60 or coeff_bits[-1] > 60:
             raise ValueError(f"CKKS profile {profile_id} has invalid coefficient modulus chain")
+        max_total_coeff_bits_128 = {8192: 218, 16384: 438, 32768: 881}
+        if degree not in max_total_coeff_bits_128:
+            raise ValueError(f"CKKS profile {profile_id} degree is not in the built-in 128-bit safety table")
+        if sum(coeff_bits) > max_total_coeff_bits_128[degree]:
+            raise ValueError(f"CKKS profile {profile_id} exceeds conservative 128-bit coefficient modulus budget")
         scale_bits = int(cfg["global_scale_bits"])
         if scale_bits <= 0 or scale_bits >= min(coeff_bits[1:-1]):
             raise ValueError(f"CKKS profile {profile_id} scale must fit inside middle primes")

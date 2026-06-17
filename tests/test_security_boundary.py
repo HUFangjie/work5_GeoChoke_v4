@@ -20,6 +20,8 @@ def test_public_backend_has_no_secret_accessors():
     assert not hasattr(backend, "context_manager")
 
 
-def test_server_class_no_single_client_decrypt_api():
+def test_server_class_no_secret_or_decrypt_storage():
     assert not hasattr(AggregationServer, "decrypt_client_update")
     assert "secret_key" not in AggregationServer.__dict__
+    assert "decryption_service" not in AggregationServer.__dict__
+    assert "_decrypt_aggregate" not in AggregationServer.__dict__

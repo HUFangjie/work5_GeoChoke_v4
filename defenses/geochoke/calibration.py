@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import os
 from typing import Any, Dict, Mapping
 
 import numpy as np
@@ -8,11 +10,19 @@ import numpy as np
 class ProfileCalibrator:
     """Offline profile calibration using real CKKS encrypt/decrypt residuals."""
 
-    def __init__(self, crypto_backend: Any, decrypt_aggregate_fn: Any, profiles: Mapping[str, Dict[str, Any]], cfg: Any) -> None:
+    def __init__(
+        self,
+        crypto_backend: Any,
+        decrypt_aggregate_fn: Any,
+        profiles: Mapping[str, Dict[str, Any]],
+        cfg: Any,
+        output_dir: str | None = None,
+    ) -> None:
         self.crypto_backend = crypto_backend
         self.decrypt_aggregate = decrypt_aggregate_fn
         self.profiles = dict(profiles)
         self.cfg = cfg
+        self.output_dir = output_dir
 
     def calibrate(self, representative_vectors: list[np.ndarray]) -> tuple[dict[str, dict[str, Any]], list[np.ndarray]]:
         if not representative_vectors:
@@ -45,4 +55,27 @@ class ProfileCalibrator:
         while len(perturbation_bank) < self.cfg.perturbation_count:
             perturbation_bank.append(residual_source[index % len(residual_source)].copy() * self.cfg.perturbation_scale)
             index += 1
+        self._save_calibration(calibration)
         return calibration, perturbation_bank
+
+    def _save_calibration(self, calibration: dict[str, dict[str, Any]]) -> None:
+        if not self.output_dir:
+            return
+        os.makedirs(self.output_dir, exist_ok=True)
+        rows = []
+        residual_payload: dict[str, np.ndarray] = {}
+        for profile_id, metrics in calibration.items():
+            rows.append(
+                {
+                    "profile_id": profile_id,
+                    "mse": metrics["mse"],
+                    "max_abs_error": metrics["max_abs_error"],
+                    "residual_sample_count": len(metrics["residual_samples"]),
+                }
+            )
+            residual_payload[profile_id] = np.vstack(metrics["residual_samples"])
+        with open(os.path.join(self.output_dir, "geochoke_profile_calibration.csv"), "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["profile_id", "mse", "max_abs_error", "residual_sample_count"])
+            writer.writeheader()
+            writer.writerows(rows)
+        np.savez(os.path.join(self.output_dir, "geochoke_residual_samples.npz"), **residual_payload)

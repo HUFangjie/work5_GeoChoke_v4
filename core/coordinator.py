@@ -62,7 +62,7 @@ def run(cfg: Any = CONFIG) -> list[dict[str, Any]]:
     public_crypto_backend = CKKSBackend(secret_context_manager.public_bundles())
     public_crypto_backend.initialize_profiles()
 
-    defense = GeoChokeDefense(cfg.geochoke, cfg.ckks_profiles, device=cfg.device)
+    defense = GeoChokeDefense(cfg.geochoke, cfg.ckks_profiles, device=cfg.device, output_dir=cfg.output_dir)
     defense.initialize(global_model, public_crypto_backend, splits.proxy_loader, decryption_service.decrypt_aggregate)
 
     attack = build_attack(cfg)
@@ -106,6 +106,8 @@ def run(cfg: Any = CONFIG) -> list[dict[str, Any]]:
             logger.warning("ALIE oracle_all_updates reproduction mode is enabled")
         total_samples = sum(record.num_samples for record in clean_records)
         uploads = []
+        plaintext_updates_for_metrics = []
+        plaintext_weights_for_metrics = []
         for client_id in selected_client_ids:
             record = record_by_client[client_id]
             malicious_weight = record.num_samples / total_samples if total_samples else 0.0
@@ -116,9 +118,28 @@ def run(cfg: Any = CONFIG) -> list[dict[str, Any]]:
                 "oracle_all_updates": [record.clean_update for record in clean_records],
                 "malicious_weight": malicious_weight,
             }
-            uploads.append(clients[client_id].encrypt_update(record, profile_id, attacker_context))
+            upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
+            uploads.append(upload)
+            if cfg.enable_plaintext_reference_metrics:
+                if clients[client_id].malicious:
+                    reference_update = clients[client_id].attack_strategy.craft_update(client_id, record.clean_update.copy(), None, attacker_context)
+                else:
+                    reference_update = record.clean_update.copy()
+                plaintext_updates_for_metrics.append(reference_update)
+                plaintext_weights_for_metrics.append(malicious_weight)
 
-        decrypted_update, metrics = server.apply_round(uploads, round_id, decryption_service.decrypt_aggregate)
+        plaintext_reference_update = None
+        if cfg.enable_plaintext_reference_metrics and plaintext_updates_for_metrics:
+            plaintext_reference_update = np.zeros_like(plaintext_updates_for_metrics[0])
+            for reference_update, reference_weight in zip(plaintext_updates_for_metrics, plaintext_weights_for_metrics):
+                plaintext_reference_update += reference_weight * reference_update
+
+        decrypted_update, metrics = server.apply_round(
+            uploads,
+            round_id,
+            decryption_service.decrypt_aggregate,
+            plaintext_reference_update=plaintext_reference_update,
+        )
         test_loss, test_accuracy = evaluator.evaluate(server.model)
         profile_cfg = cfg.ckks_profiles[profile_id]
         round_row = {

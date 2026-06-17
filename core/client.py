@@ -90,5 +90,4 @@ class Client:
             profile_id=profile_id,
             encrypted_update=encrypted,
             metadata=metadata,
-            plaintext_reference=final_update.copy() if self.cfg.enable_plaintext_reference_metrics else None,
         )

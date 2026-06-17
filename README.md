@@ -118,5 +118,7 @@ The coordinator writes:
 - `round_<t>.csv`: per-round FL, CKKS, and GeoChoke metrics.
 - `fl_ckks_geochoke_metrics.csv`: all round metrics.
 - `attack_metrics.csv`: per-client attack norm/cosine/time metrics.
+- `geochoke_profile_calibration.csv`: per-profile CKKS calibration MSE and max residual metrics.
+- `geochoke_residual_samples.npz`: fixed reference residual samples used to build the CFI perturbation bank.
 
-Plaintext aggregate reference metrics are optional experiment-only validation fields and are never used to update the global model.
+Plaintext aggregate reference metrics are optional experiment-only validation fields computed by the coordinator-side experiment verifier and are never used to update the global model.

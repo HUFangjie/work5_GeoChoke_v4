@@ -68,6 +68,7 @@ class AggregationServer:
         uploads: Iterable[ClientUpload],
         round_id: int,
         decrypt_aggregate_fn: Callable[[EncryptedUpdate, str], np.ndarray],
+        plaintext_reference_update: np.ndarray | None = None,
     ) -> tuple[np.ndarray, dict[str, Any]]:
         upload_list = list(uploads)
         previous_state = {name: tensor.detach().cpu().clone() for name, tensor in self.model.state_dict().items()}
@@ -87,11 +88,10 @@ class AggregationServer:
         self.model.load_state_dict(candidate_state)
         reference_mse = None
         reference_max_error = None
-        if self.cfg.enable_plaintext_reference_metrics and all(upload.plaintext_reference is not None for upload in upload_list):
-            plaintext_reference = np.zeros_like(decrypted_update)
-            for upload, weight in zip(upload_list, weights):
-                plaintext_reference += weight * upload.plaintext_reference
-            difference = decrypted_update - plaintext_reference
+        if plaintext_reference_update is not None:
+            if plaintext_reference_update.shape != decrypted_update.shape:
+                raise ValueError("plaintext reference update dimension mismatch")
+            difference = decrypted_update - plaintext_reference_update
             reference_mse = float(np.mean(difference * difference))
             reference_max_error = float(np.max(np.abs(difference)))
         serialized = self.crypto_backend.serialize(aggregate_ciphertext)
