@@ -1,0 +1,55 @@
+from dataclasses import dataclass, field
+from typing import Dict, List, Any
+
+CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
+    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 40},
+    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 35},
+    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 30, 30, 60], "global_scale_bits": 30},
+}
+
+@dataclass
+class GeoChokeConfig:
+    initial_profile_id: str = "high_precision"
+    warmup_rounds: int = 0
+    calibration_vectors: int = 2
+    perturbation_count: int = 2
+    perturbation_scale: float = 1.0
+    lambda_: float = 1.0
+    gamma: float = 1.0
+    rho: float = 1.0
+
+@dataclass
+class ExperimentConfig:
+    seed: int = 7
+    device: str = "cpu"
+    num_clients: int = 3
+    clients_per_round: int = 3
+    min_clients_per_round: int = 2
+    malicious_client_ids: List[int] = field(default_factory=lambda: [1])
+    num_rounds: int = 2
+    local_epochs: int = 1
+    batch_size: int = 32
+    local_lr: float = 0.01
+    server_lr: float = 1.0
+    partition_type: str = "iid"
+    dirichlet_alpha: float = 0.5
+    attack_type: str = "alie"  # none, alie, fang_mean
+    aggregation: str = "weighted_mean"
+    model_name: str = "mnist_cnn"
+    dataset_name: str = "mnist"
+    data_dir: str = "./data_cache"
+    download_data: bool = True
+    quick_data_limit: int = 600
+    proxy_size: int = 64
+    test_size: int = 256
+    ckks_profiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: CKKS_PROFILES)
+    geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
+    output_dir: str = "./outputs"
+    log_level: str = "INFO"
+    enable_plaintext_reference_metrics: bool = True
+    alie_z: float | None = None
+    alie_oracle_all_updates: bool = False
+    fang_max_norm: float = 5.0
+    fang_search_steps: int = 6
+
+CONFIG = ExperimentConfig()
