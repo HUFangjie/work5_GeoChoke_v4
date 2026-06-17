@@ -1,11 +1,30 @@
+from __future__ import annotations
+
 import numpy as np
+
+from crypto.ciphertext_payload import EncryptedUpdate
+from crypto.ckks_context_manager import CKKSContextManager
+
+
 class AuthorizedDecryptionService:
-    def __init__(self, context_manager): self._context_manager=context_manager
-    def decrypt_aggregate(self, aggregated_ciphertext, profile_id):
-        if aggregated_ciphertext.profile_id!=profile_id: raise ValueError('profile mismatch for aggregate decryption')
-        vals=[]
-        for c in aggregated_ciphertext.chunks:
-            dec=c.payload.decrypt(self._context_manager.secret(profile_id))[:c.valid_length]; vals.extend(dec)
-        arr=np.array(vals,dtype=np.float64)
-        if len(arr)!=aggregated_ciphertext.total_dimension: raise ValueError('decrypted dimension mismatch')
-        return arr
+    """Secret-key holder that decrypts aggregate ciphertexts only."""
+
+    def __init__(self, context_manager: CKKSContextManager) -> None:
+        self._context_manager = context_manager
+
+    def decrypt_aggregate(self, aggregated_ciphertext: EncryptedUpdate, profile_id: str) -> np.ndarray:
+        if aggregated_ciphertext.profile_id != profile_id:
+            raise ValueError("profile mismatch for aggregate decryption")
+        values: list[float] = []
+        secret_context = self._context_manager.secret_context(profile_id)
+        for chunk in aggregated_ciphertext.chunks:
+            if chunk.profile_id != profile_id:
+                raise ValueError("ciphertext chunk profile mismatch during aggregate decryption")
+            decrypted = chunk.payload.decrypt(secret_context)[: chunk.valid_length]
+            values.extend(float(x) for x in decrypted)
+        result = np.asarray(values, dtype=np.float64)
+        if result.size != aggregated_ciphertext.total_dimension:
+            raise ValueError("decrypted aggregate dimension mismatch")
+        if not np.all(np.isfinite(result)):
+            raise ValueError("decrypted aggregate contains non-finite values")
+        return result

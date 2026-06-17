@@ -1,14 +1,48 @@
+from __future__ import annotations
+
+from typing import Any, Dict, Mapping
+
 import numpy as np
+
+
 class ProfileCalibrator:
-    def __init__(self,crypto_backend,profiles,cfg): self.crypto_backend=crypto_backend; self.profiles=profiles; self.cfg=cfg
-    def calibrate(self,dimension:int):
-        rng=np.random.default_rng(12345); out={}; residual_bank=[]
-        for pid in self.profiles:
-            mses=[]; maxes=[]; residuals=[]
-            for _ in range(self.cfg.calibration_vectors):
-                v=rng.normal(0,0.01,size=dimension); enc=self.crypto_backend.encrypt_update(v,pid); from core.decryption_service import AuthorizedDecryptionService
-                dec=AuthorizedDecryptionService(self.crypto_backend.context_manager).decrypt_aggregate(enc,pid); res=dec-v; mses.append(float(np.mean(res*res))); maxes.append(float(np.max(abs(res)))); residuals.append(res)
-            out[pid]={'mse':float(np.mean(mses)),'max_abs_error':float(np.max(maxes)),'residual_samples':residuals}
-        ref=list(self.profiles.keys())[0]; samples=out[ref]['residual_samples'];
-        while len(residual_bank)<self.cfg.perturbation_count: residual_bank.append(samples[len(residual_bank)%len(samples)].copy()*self.cfg.perturbation_scale)
-        return out,residual_bank
+    """Offline profile calibration using real CKKS encrypt/decrypt residuals."""
+
+    def __init__(self, crypto_backend: Any, decrypt_aggregate_fn: Any, profiles: Mapping[str, Dict[str, Any]], cfg: Any) -> None:
+        self.crypto_backend = crypto_backend
+        self.decrypt_aggregate = decrypt_aggregate_fn
+        self.profiles = dict(profiles)
+        self.cfg = cfg
+
+    def calibrate(self, representative_vectors: list[np.ndarray]) -> tuple[dict[str, dict[str, Any]], list[np.ndarray]]:
+        if not representative_vectors:
+            raise ValueError("calibration requires at least one representative vector")
+        dimension = int(representative_vectors[0].size)
+        for vector in representative_vectors:
+            if vector.size != dimension:
+                raise ValueError("all representative vectors must have the model-update dimension")
+        calibration: dict[str, dict[str, Any]] = {}
+        for profile_id in self.profiles:
+            mses: list[float] = []
+            max_errors: list[float] = []
+            residual_samples: list[np.ndarray] = []
+            for vector in representative_vectors[: self.cfg.calibration_vectors]:
+                encrypted = self.crypto_backend.encrypt_update(vector, profile_id)
+                decrypted = self.decrypt_aggregate(encrypted, profile_id)
+                residual = decrypted - vector
+                mses.append(float(np.mean(residual * residual)))
+                max_errors.append(float(np.max(np.abs(residual))))
+                residual_samples.append(residual.astype(np.float64, copy=True))
+            calibration[profile_id] = {
+                "mse": float(np.mean(mses)),
+                "max_abs_error": float(np.max(max_errors)),
+                "residual_samples": residual_samples,
+            }
+        reference_profile = next(iter(self.profiles))
+        residual_source = calibration[reference_profile]["residual_samples"]
+        perturbation_bank: list[np.ndarray] = []
+        index = 0
+        while len(perturbation_bank) < self.cfg.perturbation_count:
+            perturbation_bank.append(residual_source[index % len(residual_source)].copy() * self.cfg.perturbation_scale)
+            index += 1
+        return calibration, perturbation_bank

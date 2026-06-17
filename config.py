@@ -2,9 +2,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any
 
 CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
-    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 40},
-    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 35},
-    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 30, 30, 60], "global_scale_bits": 30},
+    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 45, 45, 60], "global_scale_bits": 40},
+    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 35},
+    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 30},
 }
 
 @dataclass
@@ -46,7 +46,7 @@ class ExperimentConfig:
     geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
     output_dir: str = "./outputs"
     log_level: str = "INFO"
-    enable_plaintext_reference_metrics: bool = True
+    enable_plaintext_reference_metrics: bool = False
     alie_z: float | None = None
     alie_oracle_all_updates: bool = False
     fang_max_norm: float = 5.0

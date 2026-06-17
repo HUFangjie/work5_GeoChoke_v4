@@ -1,22 +1,107 @@
-import random, time, numpy as np, torch
+from __future__ import annotations
+
+import copy
+import random
+import time
+from typing import Any, Callable, Iterable
+
+import numpy as np
+import torch
+
+from core.types import ClientUpload
+from crypto.ciphertext_payload import EncryptedUpdate
+from crypto.update_codec import ModelUpdateCodec
+
+
 class AggregationServer:
-    def __init__(self,cfg,model,codec,crypto_backend,decryption_service,defense):
-        self.cfg=cfg; self.model=model; self.codec=codec; self.crypto_backend=crypto_backend; self.decryption_service=decryption_service; self.defense=defense
-        if hasattr(self,'secret_key'): raise RuntimeError('server must not hold secret key')
-    def sample_clients(self,round_id):
-        rng=random.Random(self.cfg.seed+round_id); ids=list(range(self.cfg.num_clients)); rng.shuffle(ids); return ids[:self.cfg.clients_per_round]
-    def aggregate_encrypted(self,uploads):
-        if len(uploads)<self.cfg.min_clients_per_round: raise ValueError('too few aggregation participants')
-        pid=uploads[0].profile_id
-        if any(u.profile_id!=pid for u in uploads): raise ValueError('profile mismatch among client uploads')
-        total=sum(u.num_samples for u in uploads); weighted=[]
-        t0=time.perf_counter()
-        for u in uploads: weighted.append(self.crypto_backend.multiply_plain(u.encrypted_update,u.num_samples/total))
-        agg=self.crypto_backend.add_ciphertexts(weighted); return agg, time.perf_counter()-t0
-    def apply_round(self,uploads,round_id):
-        prev={k:v.detach().cpu().clone() for k,v in self.model.state_dict().items()}; agg,agg_time=self.aggregate_encrypted(uploads); t0=time.perf_counter(); dec=self.decryption_service.decrypt_aggregate(agg,uploads[0].profile_id); dec_time=time.perf_counter()-t0
-        cand=self.codec.update_to_state_dict(prev, self.cfg.server_lr*dec); candidate=type(self.model)(); candidate.load_state_dict(cand); geo=self.defense.after_aggregate(self.model,candidate,uploads[0].profile_id,round_id); self.model.load_state_dict(cand)
-        plain_ref=None; mse=maxerr=None
-        if self.cfg.enable_plaintext_reference_metrics and all(u.plaintext_reference is not None for u in uploads):
-            total=sum(u.num_samples for u in uploads); plain_ref=sum((u.num_samples/total)*u.plaintext_reference for u in uploads); diff=dec-plain_ref; mse=float(np.mean(diff*diff)); maxerr=float(np.max(np.abs(diff)))
-        return dec, {'encrypted_aggregation_time':agg_time,'decryption_time':dec_time,'ciphertext_block_count':agg.block_count,'serialized_ciphertext_bytes':sum(len(c.payload.serialize()) for c in agg.chunks),'aggregate_update_norm':float(np.linalg.norm(dec)),'aggregate_ckks_mse':mse,'aggregate_maximum_absolute_error':maxerr, **geo}
+    """Aggregation server without CKKS secret keys.
+
+    The server owns only the global model, public-key crypto backend, and a
+    narrow aggregate-decryption callable. It never decrypts individual client
+    ciphertexts and computes aggregation weights from server-side sample counts.
+    """
+
+    def __init__(
+        self,
+        cfg: Any,
+        model: torch.nn.Module,
+        codec: ModelUpdateCodec,
+        crypto_backend: Any,
+        defense: Any,
+        model_factory: Callable[[], torch.nn.Module],
+    ) -> None:
+        self.cfg = cfg
+        self.model = model
+        self.codec = codec
+        self.crypto_backend = crypto_backend
+        self.defense = defense
+        self.model_factory = model_factory
+
+    def sample_clients(self, round_id: int) -> list[int]:
+        rng = random.Random(self.cfg.seed + round_id)
+        client_ids = list(range(self.cfg.num_clients))
+        rng.shuffle(client_ids)
+        return client_ids[: self.cfg.clients_per_round]
+
+    def aggregate_encrypted(self, uploads: Iterable[ClientUpload]) -> tuple[EncryptedUpdate, float, list[float]]:
+        upload_list = list(uploads)
+        if len(upload_list) < self.cfg.min_clients_per_round:
+            raise ValueError("too few aggregation participants")
+        profile_id = upload_list[0].profile_id
+        if any(upload.profile_id != profile_id for upload in upload_list):
+            raise ValueError("profile mismatch among client uploads")
+        total_samples = sum(upload.num_samples for upload in upload_list)
+        if total_samples <= 0:
+            raise ValueError("selected clients have no samples")
+        weights = [upload.num_samples / total_samples for upload in upload_list]
+        start_time = time.perf_counter()
+        weighted_ciphertexts = [
+            self.crypto_backend.multiply_plain(upload.encrypted_update, weight)
+            for upload, weight in zip(upload_list, weights)
+        ]
+        aggregate = self.crypto_backend.add_ciphertexts(weighted_ciphertexts)
+        aggregation_time = time.perf_counter() - start_time
+        return aggregate, aggregation_time, weights
+
+    def apply_round(
+        self,
+        uploads: Iterable[ClientUpload],
+        round_id: int,
+        decrypt_aggregate_fn: Callable[[EncryptedUpdate, str], np.ndarray],
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        upload_list = list(uploads)
+        previous_state = {name: tensor.detach().cpu().clone() for name, tensor in self.model.state_dict().items()}
+        aggregate_ciphertext, aggregation_time, weights = self.aggregate_encrypted(upload_list)
+        profile_id = upload_list[0].profile_id
+        start_time = time.perf_counter()
+        decrypted_update = decrypt_aggregate_fn(aggregate_ciphertext, profile_id)
+        decryption_time = time.perf_counter() - start_time
+        candidate_state = self.codec.apply_update_to_state_dict(
+            previous_state,
+            decrypted_update,
+            step_size=self.cfg.server_lr,
+        )
+        candidate_model = self.model_factory()
+        candidate_model.load_state_dict(candidate_state)
+        geo_metrics = self.defense.after_aggregate(self.model, candidate_model, profile_id, round_id)
+        self.model.load_state_dict(candidate_state)
+        reference_mse = None
+        reference_max_error = None
+        if self.cfg.enable_plaintext_reference_metrics and all(upload.plaintext_reference is not None for upload in upload_list):
+            plaintext_reference = np.zeros_like(decrypted_update)
+            for upload, weight in zip(upload_list, weights):
+                plaintext_reference += weight * upload.plaintext_reference
+            difference = decrypted_update - plaintext_reference
+            reference_mse = float(np.mean(difference * difference))
+            reference_max_error = float(np.max(np.abs(difference)))
+        serialized = self.crypto_backend.serialize(aggregate_ciphertext)
+        return decrypted_update, {
+            "encrypted_aggregation_time": aggregation_time,
+            "decryption_time": decryption_time,
+            "ciphertext_block_count": aggregate_ciphertext.block_count,
+            "serialized_ciphertext_bytes": sum(len(chunk["payload"]) for chunk in serialized["chunks"]),
+            "aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
+            "aggregate_ckks_mse": reference_mse,
+            "aggregate_maximum_absolute_error": reference_max_error,
+            **geo_metrics,
+        }

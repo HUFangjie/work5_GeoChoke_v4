@@ -1,10 +1,23 @@
 import numpy as np
+
 from config import CKKS_PROFILES
-from crypto.ckks_context_manager import CKKSContextManager
-from crypto.ckks_backend import CKKSBackend
 from core.decryption_service import AuthorizedDecryptionService
+from crypto.ckks_backend import CKKSBackend
+from crypto.ckks_context_manager import CKKSContextManager
+
+
+def _build_crypto():
+    manager = CKKSContextManager(CKKS_PROFILES)
+    manager.initialize()
+    backend = CKKSBackend(manager.public_bundles())
+    backend.initialize_profiles()
+    return backend, AuthorizedDecryptionService(manager)
+
 
 def test_ckks_roundtrip_and_chunking():
-    cm=CKKSContextManager(CKKS_PROFILES); b=CKKSBackend(cm,CKKS_PROFILES); b.initialize_profiles(); d=AuthorizedDecryptionService(cm)
-    v=np.linspace(-1,1,9000); enc=b.encrypt_update(v,'high_precision'); assert enc.block_count>1
-    dec=d.decrypt_aggregate(enc,'high_precision'); assert np.mean((dec-v)**2)<1e-6
+    backend, service = _build_crypto()
+    vector = np.linspace(-1, 1, 9000)
+    encrypted = backend.encrypt_update(vector, "high_precision")
+    assert encrypted.block_count > 1
+    decrypted = service.decrypt_aggregate(encrypted, "high_precision")
+    assert np.mean((decrypted - vector) ** 2) < 1e-6

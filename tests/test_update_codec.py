@@ -1,8 +1,17 @@
-import models.mnist_cnn
-from models.registry import create_model
-from crypto.update_codec import ModelUpdateCodec
-import numpy as np, torch
+import numpy as np
+import torch
 
-def test_codec_roundtrip():
-    m=create_model('mnist_cnn'); c=ModelUpdateCodec(m); flat=c.flatten_state_dict(m.state_dict()); sd=c.unflatten_to_state_dict(flat,m.state_dict())
-    for s in c.specs: assert torch.allclose(sd[s.name], m.state_dict()[s.name])
+import models.mnist_cnn
+from crypto.update_codec import ModelUpdateCodec
+from models.registry import create_model
+
+
+def test_codec_roundtrip_and_apply_update():
+    model = create_model("mnist_cnn")
+    codec = ModelUpdateCodec(model)
+    flat = codec.flatten_state_dict(model.state_dict())
+    update_state = codec.unflatten_to_update_state_dict(flat * 0.0)
+    assert set(update_state) == set(codec.trainable_names)
+    new_state = codec.apply_update_to_state_dict(model.state_dict(), np.zeros_like(flat))
+    for name, tensor in model.state_dict().items():
+        assert torch.allclose(new_state[name], tensor.cpu())
