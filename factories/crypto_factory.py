@@ -5,8 +5,9 @@ from typing import Any, Callable
 
 
 def _ensure_default_registrations() -> None:
-    # Import for side effects: registers built-in components. Safe if already imported.
-    import factories.defaults  # noqa: F401
+    from factories.defaults import register_defaults
+
+    register_defaults()
 
 CRYPTO_REGISTRY: dict[str, Callable[[Any], Any]] = {}
 

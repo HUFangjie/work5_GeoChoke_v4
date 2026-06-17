@@ -89,3 +89,23 @@ def test_no_defense_factory_keeps_initial_profile():
     metrics = defense.after_aggregate(None, None, cfg.geochoke.initial_profile_id, 0)
     assert metrics["defense_enabled"] is False
     assert metrics["selected_next_profile"] == cfg.geochoke.initial_profile_id
+
+
+def test_default_registration_recovers_after_registry_mutation():
+    from factories.dataset_factory import DATASET_REGISTRY, create_dataset_provider
+    from factories.model_factory import MODEL_REGISTRY, create_model_factory
+
+    cfg = ExperimentConfig(ckks_profiles=CKKS_PROFILES)
+    saved_datasets = dict(DATASET_REGISTRY)
+    saved_models = dict(MODEL_REGISTRY)
+    try:
+        DATASET_REGISTRY.clear()
+        DATASET_REGISTRY["dummy"] = DummyDatasetProvider
+        MODEL_REGISTRY.clear()
+        assert create_dataset_provider(cfg).__class__.__name__ == "MNISTProvider"
+        assert create_model_factory(cfg).name == "mnist_cnn"
+    finally:
+        DATASET_REGISTRY.clear()
+        DATASET_REGISTRY.update(saved_datasets)
+        MODEL_REGISTRY.clear()
+        MODEL_REGISTRY.update(saved_models)

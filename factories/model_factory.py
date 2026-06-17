@@ -6,8 +6,9 @@ MODEL_REGISTRY: dict[str, Callable[[], Any]] = {}
 
 
 def _ensure_default_registrations() -> None:
-    # Import for side effects: registers built-in components. Safe if already imported.
-    import factories.defaults  # noqa: F401
+    from factories.defaults import register_defaults
+
+    register_defaults()
 
 def register_model(name: str) -> Callable[[Callable[[], Any]], Callable[[], Any]]:
     def decorator(factory: Callable[[], Any]) -> Callable[[], Any]:
