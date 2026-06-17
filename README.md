@@ -118,7 +118,13 @@ The coordinator writes:
 - `round_<t>.csv`: per-round FL, CKKS, and GeoChoke metrics.
 - `fl_ckks_geochoke_metrics.csv`: all round metrics.
 - `attack_metrics.csv`: per-client attack norm/cosine/time metrics.
-- `geochoke_profile_calibration.csv`: per-profile CKKS calibration MSE and max residual metrics.
-- `geochoke_residual_samples.npz`: fixed reference residual samples used to build the CFI perturbation bank.
+- `crypto_calibration/direct_profile_calibration.csv`: per-profile direct CKKS residual MSE, max residual, relative L2, residual mean, and residual standard deviation.
+- `crypto_calibration/aggregation_pipeline_validation.csv`: full Enc → plaintext-weight multiply → ciphertext addition → aggregate decrypt validation metrics, including norm ratio.
+- `crypto_calibration/reference_residual_bank.npz`: fixed reference residual samples used to build the CFI perturbation bank.
 
 Plaintext aggregate reference metrics are optional experiment-only validation fields computed by the coordinator-side experiment verifier and are never used to update the global model.
+
+
+## Component registry and extension
+
+Built-in components are registered in `factories/defaults.py`. The coordinator depends on injected dataset, model factory, crypto backend, decryption service, defense, and attack objects; it does not import MNIST, CKKS, GeoChoke, or concrete attacks. To switch components, register a new implementation with `register_dataset`, `register_model`, `register_crypto`, `register_defense`, or `register_attack`, then change only the corresponding name in `config.py` (`dataset_name`, `model_name`, `crypto_backend_name`, `defense_name`, `attack_name`). Unknown names raise `ValueError` rather than silently falling back.

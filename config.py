@@ -2,9 +2,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Any
 
 CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
-    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 45, 45, 60], "global_scale_bits": 40},
-    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 35},
-    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 30},
+    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 40},
+    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 35},
+    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 30, 30, 60], "global_scale_bits": 30},
 }
 
 @dataclass
@@ -33,7 +33,10 @@ class ExperimentConfig:
     server_lr: float = 1.0
     partition_type: str = "iid"
     dirichlet_alpha: float = 0.5
-    attack_type: str = "alie"  # none, alie, fang_mean
+    crypto_backend_name: str = "ckks"
+    defense_name: str = "geochoke"
+    attack_name: str = "alie"  # none, alie, fang_mean
+    attack_type: str = "alie"  # backward-compatible alias
     aggregation: str = "weighted_mean"
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"
@@ -47,6 +50,9 @@ class ExperimentConfig:
     output_dir: str = "./outputs"
     log_level: str = "INFO"
     enable_plaintext_reference_metrics: bool = False
+    pipeline_validation_rtol: float = 5e-2
+    pipeline_validation_atol: float = 5e-2
+    pipeline_validation_norm_ratio_tolerance: float = 5e-2
     alie_z: float | None = None
     alie_oracle_all_updates: bool = False
     fang_max_norm: float = 5.0

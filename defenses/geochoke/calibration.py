@@ -36,6 +36,7 @@ class ProfileCalibrator:
             mses: list[float] = []
             max_errors: list[float] = []
             residual_samples: list[np.ndarray] = []
+            relative_errors: list[float] = []
             for vector in representative_vectors[: self.cfg.calibration_vectors]:
                 encrypted = self.crypto_backend.encrypt_update(vector, profile_id)
                 decrypted = self.decrypt_aggregate(encrypted, profile_id)
@@ -43,9 +44,14 @@ class ProfileCalibrator:
                 mses.append(float(np.mean(residual * residual)))
                 max_errors.append(float(np.max(np.abs(residual))))
                 residual_samples.append(residual.astype(np.float64, copy=True))
+                relative_errors.append(float(np.linalg.norm(residual) / max(np.linalg.norm(vector), 1e-12)))
+            stacked_residuals = np.vstack(residual_samples)
             calibration[profile_id] = {
                 "mse": float(np.mean(mses)),
                 "max_abs_error": float(np.max(max_errors)),
+                "relative_l2_error": float(np.mean(relative_errors)),
+                "residual_mean": float(np.mean(stacked_residuals)),
+                "residual_std": float(np.std(stacked_residuals)),
                 "residual_samples": residual_samples,
             }
         reference_profile = next(iter(self.profiles))
@@ -68,14 +74,17 @@ class ProfileCalibrator:
             rows.append(
                 {
                     "profile_id": profile_id,
+                    "sample_count": len(metrics["residual_samples"]),
                     "mse": metrics["mse"],
                     "max_abs_error": metrics["max_abs_error"],
-                    "residual_sample_count": len(metrics["residual_samples"]),
+                    "relative_l2_error": metrics["relative_l2_error"],
+                    "residual_mean": metrics["residual_mean"],
+                    "residual_std": metrics["residual_std"],
                 }
             )
             residual_payload[profile_id] = np.vstack(metrics["residual_samples"])
-        with open(os.path.join(self.output_dir, "geochoke_profile_calibration.csv"), "w", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=["profile_id", "mse", "max_abs_error", "residual_sample_count"])
+        with open(os.path.join(self.output_dir, "direct_profile_calibration.csv"), "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["profile_id", "sample_count", "mse", "max_abs_error", "relative_l2_error", "residual_mean", "residual_std"])
             writer.writeheader()
             writer.writerows(rows)
-        np.savez(os.path.join(self.output_dir, "geochoke_residual_samples.npz"), **residual_payload)
+        np.savez(os.path.join(self.output_dir, "reference_residual_bank.npz"), **residual_payload)

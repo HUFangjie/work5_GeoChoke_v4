@@ -70,7 +70,12 @@ class CKKSContextManager:
         }
 
     def secret_context(self, profile_id: str) -> Any:
+        if profile_id not in self._secret_bundles:
+            raise KeyError(f"unknown CKKS profile {profile_id}")
         return self._secret_bundles[profile_id].secret_context
+
+    def secret_key(self, profile_id: str) -> Any:
+        return self.secret_context(profile_id).secret_key()
 
     def public_context(self, profile_id: str) -> Any:
         return self._secret_bundles[profile_id].public_context
@@ -98,5 +103,5 @@ class CKKSContextManager:
         if sum(coeff_bits) > max_total_coeff_bits_128[degree]:
             raise ValueError(f"CKKS profile {profile_id} exceeds conservative 128-bit coefficient modulus budget")
         scale_bits = int(cfg["global_scale_bits"])
-        if scale_bits <= 0 or scale_bits >= min(coeff_bits[1:-1]):
+        if scale_bits <= 0 or scale_bits > min(coeff_bits[1:-1]):
             raise ValueError(f"CKKS profile {profile_id} scale must fit inside middle primes")
