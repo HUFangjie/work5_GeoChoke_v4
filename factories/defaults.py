@@ -10,7 +10,7 @@ from crypto.ckks_context_manager import CKKSContextManager
 from data.mnist import MNISTProvider
 from defenses.geochoke.defense import GeoChokeDefense
 from defenses.no_defense import NoDefense
-from factories.attack_factory import ATTACK_REGISTRY
+from factories.registries import ATTACK_REGISTRY
 from factories.crypto_factory import CRYPTO_REGISTRY, CryptoBundle
 from factories.dataset_factory import DATASET_REGISTRY
 from factories.defense_factory import DEFENSE_REGISTRY

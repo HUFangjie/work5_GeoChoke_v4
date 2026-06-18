@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing import Any, Callable
 
+from factories.registries import ATTACK_REGISTRY
+
 
 
 def _ensure_default_registrations() -> None:
@@ -8,7 +10,6 @@ def _ensure_default_registrations() -> None:
 
     register_defaults()
 
-ATTACK_REGISTRY: dict[str, Callable[[Any], Any]] = {}
 
 def register_attack(name: str) -> Callable[[Callable[[Any], Any]], Callable[[Any], Any]]:
     def decorator(factory: Callable[[Any], Any]) -> Callable[[Any], Any]:
