@@ -33,7 +33,7 @@ class Client:
         self.malicious = malicious
         self.cfg = cfg
 
-    def compute_clean_update(self, global_state: Dict[str, Any], round_id: int | None = None) -> LocalUpdateRecord:
+    def compute_local_update(self, global_state: Dict[str, Any], round_id: int | None = None) -> LocalUpdateRecord:
         if (
             self.malicious
             and round_id is not None
@@ -55,21 +55,27 @@ class Client:
         codec = self.codec_factory(local_model)
         local_flat = codec.flatten_state_dict(local_model.state_dict())
         global_flat = codec.flatten_state_dict(global_state)
-        clean_update = local_flat - global_flat
+        local_update = local_flat - global_flat
         return LocalUpdateRecord(
             client_id=self.client_id,
             num_samples=len(self.loader.dataset),
-            clean_update=clean_update,
+            local_update=local_update,
             train_loss=float(train_loss),
+            metadata={"update_type": "benign", "dba_attack_active": False},
         )
+
+
+    def compute_clean_update(self, global_state: Dict[str, Any], round_id: int | None = None) -> LocalUpdateRecord:
+        """Backward-compatible wrapper; records now carry local_update."""
+        return self.compute_local_update(global_state, round_id)
 
     def encrypt_update(
         self,
-        clean_record: LocalUpdateRecord,
+        update_record: LocalUpdateRecord,
         profile_id: str,
         attacker_context: Dict[str, Any],
     ) -> ClientUpload:
-        before = clean_record.clean_update.copy()
+        before = update_record.local_update.copy()
         start_time = time.perf_counter()
         if self.malicious:
             final_update = self.attack_strategy.craft_update(
@@ -88,20 +94,29 @@ class Client:
         before_norm = float(np.linalg.norm(before))
         after_norm = float(np.linalg.norm(final_update))
         cosine = float(np.dot(before, final_update) / (before_norm * after_norm + 1e-12))
+        benign_norm_mean = float(attacker_context.get("benign_selected_update_norm_mean", 0.0))
+        dba_extra = {}
+        if update_record.metadata.get("dba_attack_active", False):
+            poisoned_norm = float(update_record.metadata.get("poisoned_update_norm", after_norm))
+            dba_extra = {
+                "benign_selected_update_norm_mean": benign_norm_mean,
+                "poisoned_to_benign_norm_ratio": poisoned_norm / max(benign_norm_mean, 1e-12),
+            }
         metadata = {
-            "train_loss": clean_record.train_loss,
+            "train_loss": update_record.train_loss,
             "attack_time": attack_time,
             "encryption_time": encryption_time,
             "malicious_update_norm_before": before_norm,
             "malicious_update_norm_after": after_norm,
             "cosine_before_after": cosine,
-            "attack_applied_before_encryption": bool(self.malicious),
+            "attack_applied_before_encryption": bool(update_record.metadata.get("dba_attack_active", False) or (self.malicious and self.cfg.attack_name != "dba")),
             "is_malicious": bool(self.malicious),
-            **clean_record.metadata,
+            **update_record.metadata,
+            **dba_extra,
         }
         return ClientUpload(
             client_id=self.client_id,
-            num_samples=clean_record.num_samples,
+            num_samples=update_record.num_samples,
             profile_id=profile_id,
             encrypted_update=encrypted,
             metadata=metadata,

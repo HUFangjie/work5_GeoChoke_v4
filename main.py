@@ -1,3 +1,5 @@
+import os
+
 from config import CONFIG
 from factories import defaults  # registers built-in components
 from factories.attack_factory import create_attack
@@ -10,7 +12,15 @@ from utils.logger import setup_logger
 from utils.seed import set_seed
 
 
+def _configure_experiment_output_dir() -> None:
+    attack_mode = CONFIG.dba_attack_mode if CONFIG.attack_name == "dba" else "na"
+    run_dir = f"attack={CONFIG.attack_name}_defense={CONFIG.defense_name}_mode={attack_mode}_seed={CONFIG.seed}"
+    if os.path.basename(os.path.normpath(CONFIG.output_dir)) != run_dir:
+        CONFIG.output_dir = os.path.join(CONFIG.output_dir, run_dir)
+
+
 def main() -> None:
+    _configure_experiment_output_dir()
     set_seed(CONFIG.seed)
     logger = setup_logger(CONFIG.log_level)
     dataset_provider = create_dataset_provider(CONFIG)

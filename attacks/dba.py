@@ -45,6 +45,19 @@ class DBATrigger:
         col += trigger_id * (self.size + self.gap)
         return row, row + self.size, col, col + self.size
 
+    def validate_layout(self, height: int, width: int) -> None:
+        regions = [self.region(trigger_id, height, width) for trigger_id in range(self.num_parts)]
+        occupied: set[tuple[int, int]] = set()
+        for r0, r1, c0, c1 in regions:
+            if r0 < 0 or c0 < 0 or r1 > height or c1 > width:
+                raise ValueError("DBA trigger part exceeds input image bounds")
+            for row in range(r0, r1):
+                for col in range(c0, c1):
+                    pixel = (row, col)
+                    if pixel in occupied:
+                        raise ValueError("DBA trigger parts must not overlap")
+                    occupied.add(pixel)
+
     def apply_local(self, images: torch.Tensor, trigger_id: int) -> torch.Tensor:
         out = images.clone()
         h, w = out.shape[-2], out.shape[-1]
@@ -117,30 +130,67 @@ class DBALocalTrainer(LocalTrainer):
 class DBAAttack(AttackStrategy):
     def __init__(self, cfg: Any) -> None:
         self.cfg = cfg
+        self._validate_config()
         self.trigger = DBATrigger(cfg)
-        if len(cfg.malicious_client_ids) < int(cfg.dba_num_trigger_parts):
-            raise ValueError("DBA requires at least dba_num_trigger_parts malicious clients to avoid centralized backdoor behavior")
-        self.client_to_trigger = {client_id: i for i, client_id in enumerate(cfg.malicious_client_ids[: int(cfg.dba_num_trigger_parts)])}
+        bound_clients = list(cfg.malicious_client_ids[: int(cfg.dba_num_trigger_parts)])
+        self.client_to_trigger = {client_id: i for i, client_id in enumerate(bound_clients)}
+        self.extra_malicious_clients = [client_id for client_id in cfg.malicious_client_ids if client_id not in self.client_to_trigger]
 
-    def is_attack_round(self, round_id: int) -> bool:
-        return int(self.cfg.dba_attack_start_round) <= round_id <= int(self.cfg.dba_attack_end_round) and (round_id - int(self.cfg.dba_attack_start_round)) % int(self.cfg.dba_poison_interval) == 0
+    def _validate_config(self) -> None:
+        num_classes = int(getattr(self.cfg, "num_classes", 10))
+        if not 0 <= int(self.cfg.dba_target_label) < num_classes:
+            raise ValueError("dba_target_label must satisfy 0 <= dba_target_label < num_classes")
+        if not 0.0 < float(self.cfg.dba_poison_ratio) < 1.0:
+            raise ValueError("dba_poison_ratio must satisfy 0 < ratio < 1")
+        for field in ["dba_local_epochs", "dba_num_trigger_parts"]:
+            if int(getattr(self.cfg, field)) <= 0:
+                raise ValueError(f"{field} must be > 0")
+        for field in ["dba_local_lr", "dba_scale_factor", "dba_multi_shot_scale_factor", "dba_single_shot_scale_factor"]:
+            if float(getattr(self.cfg, field)) <= 0.0:
+                raise ValueError(f"{field} must be > 0")
+        if self.cfg.dba_attack_mode not in {"multi_shot", "single_shot"}:
+            raise ValueError("dba_attack_mode must be 'multi_shot' or 'single_shot'")
+        if int(self.cfg.dba_poison_interval) < 0:
+            raise ValueError("dba_poison_interval must be >= 0")
+        if not int(self.cfg.dba_attack_start_round) <= int(self.cfg.dba_attack_end_round) < int(self.cfg.num_rounds):
+            raise ValueError("DBA schedule must satisfy start_round <= end_round < num_rounds")
+        if len(self.cfg.malicious_client_ids) < int(self.cfg.dba_num_trigger_parts):
+            raise ValueError("DBA requires at least dba_num_trigger_parts malicious clients to avoid centralized backdoor behavior")
+        DBATrigger(self.cfg).validate_layout(28, 28)
+
+    def scale_factor_for_mode(self) -> float:
+        if self.cfg.dba_attack_mode == "single_shot":
+            return float(self.cfg.dba_single_shot_scale_factor)
+        return float(self.cfg.dba_multi_shot_scale_factor)
 
     def active_malicious_clients(self, round_id: int) -> list[int]:
-        if not self.is_attack_round(round_id):
+        start = int(self.cfg.dba_attack_start_round)
+        end = int(self.cfg.dba_attack_end_round)
+        if round_id < start or round_id > end:
             return []
         if self.cfg.dba_attack_mode == "multi_shot":
             return list(self.client_to_trigger)
-        if self.cfg.dba_attack_mode == "single_shot":
-            ordered = list(self.client_to_trigger)
-            return [ordered[(round_id - int(self.cfg.dba_attack_start_round)) % len(ordered)]]
-        raise ValueError(f"Unsupported dba_attack_mode: {self.cfg.dba_attack_mode}")
+        ordered = list(self.client_to_trigger)
+        interval = int(self.cfg.dba_poison_interval)
+        if interval == 0:
+            return ordered if round_id == start else []
+        delta = round_id - start
+        if delta % interval != 0:
+            return []
+        attack_event_index = delta // interval
+        if attack_event_index >= len(ordered):
+            return []
+        return [ordered[attack_event_index]]
+
+    def is_attack_round(self, round_id: int) -> bool:
+        return bool(self.active_malicious_clients(round_id))
 
     def should_poison(self, client_id: int, round_id: int) -> bool:
         return client_id in self.active_malicious_clients(round_id)
 
     def train_local_update(self, client_id: int, loader: Any, model_factory: Any, codec_factory: Any, global_state: dict[str, Any], round_id: int) -> LocalUpdateRecord:
         if client_id not in self.client_to_trigger:
-            raise ValueError(f"malicious client {client_id} has no DBA trigger binding")
+            raise ValueError(f"malicious client {client_id} is not bound to a DBA trigger and will not run DBA poisoning")
         local_model = model_factory()
         local_model.load_state_dict(copy.deepcopy(global_state))
         trainer = DBALocalTrainer(self.cfg, self.client_to_trigger[client_id])
@@ -148,14 +198,23 @@ class DBAAttack(AttackStrategy):
         codec = codec_factory(local_model)
         local_flat = codec.flatten_state_dict(local_model.state_dict())
         global_flat = codec.flatten_state_dict(global_state)
-        update = (local_flat - global_flat) * float(self.cfg.dba_scale_factor)
+        unscaled_update = local_flat - global_flat
+        scale = self.scale_factor_for_mode()
+        update = unscaled_update * scale
+        before_norm = float(np.linalg.norm(unscaled_update))
+        after_norm = float(np.linalg.norm(update))
         return LocalUpdateRecord(client_id, len(loader.dataset), update, float(train_loss), metadata={
+            "update_type": "poisoned",
             "dba_attack_active": True,
             "dba_trigger_id": self.client_to_trigger[client_id],
             "poisoned_sample_count": trainer.poisoned_sample_count,
             "dba_seen_sample_count": trainer.seen_sample_count,
+            "effective_poison_ratio": trainer.poisoned_sample_count / max(1, trainer.seen_sample_count),
             "poison_ratio": trainer.poisoned_sample_count / max(1, trainer.seen_sample_count),
-            "dba_scale_factor": float(self.cfg.dba_scale_factor),
+            "dba_scale_factor": scale,
+            "update_norm_before_scale": before_norm,
+            "update_norm_after_scale": after_norm,
+            "poisoned_update_norm": after_norm,
         })
 
     def craft_update(self, client_id, clean_update, global_model, attacker_context):

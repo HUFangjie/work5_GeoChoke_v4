@@ -26,7 +26,7 @@ class ExperimentConfig:
     clients_per_round: int = 5
     min_clients_per_round: int = 2
     malicious_client_ids: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
-    num_rounds: int = 30
+    num_rounds: int = 50
     local_epochs: int = 1
     batch_size: int = 32
     local_lr: float = 0.01
@@ -39,6 +39,7 @@ class ExperimentConfig:
     aggregation: str = "weighted_mean"
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"
+    num_classes: int = 10
     data_dir: str = "./data_cache"
     download_data: bool = True
     quick_data_limit: int = 600
@@ -62,6 +63,8 @@ class ExperimentConfig:
     dba_local_epochs: int = 10
     dba_local_lr: float = 0.05
     dba_scale_factor: float = 1.0
+    dba_multi_shot_scale_factor: float = 1.0
+    dba_single_shot_scale_factor: float = 20.0
     dba_attack_mode: str = "multi_shot"  # multi_shot, single_shot
     dba_attack_start_round: int = 10
     dba_attack_end_round: int = 29

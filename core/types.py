@@ -12,9 +12,14 @@ from crypto.ciphertext_payload import EncryptedUpdate
 class LocalUpdateRecord:
     client_id: int
     num_samples: int
-    clean_update: np.ndarray
+    local_update: np.ndarray
     train_loss: float
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def clean_update(self) -> np.ndarray:
+        """Backward-compatible alias for older non-DBA code paths."""
+        return self.local_update
 
 
 @dataclass

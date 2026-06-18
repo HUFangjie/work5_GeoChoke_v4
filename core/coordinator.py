@@ -94,14 +94,15 @@ class FederatedCoordinator:
             malicious_selected = [client_id for client_id in selected_client_ids if client_id in self.cfg.malicious_client_ids]
             self.logger.info("round=%s profile=%s selected=%s", round_id, profile_id, selected_client_ids)
             global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
-            clean_records = [clients[client_id].compute_clean_update(global_state, round_id) for client_id in selected_client_ids]
-            record_by_client = {record.client_id: record for record in clean_records}
-            observable_updates = [record_by_client[client_id].clean_update for client_id in selected_client_ids if client_id not in self.cfg.malicious_client_ids]
+            local_records = [clients[client_id].compute_local_update(global_state, round_id) for client_id in selected_client_ids]
+            record_by_client = {record.client_id: record for record in local_records}
+            observable_updates = [record_by_client[client_id].local_update for client_id in selected_client_ids if client_id not in self.cfg.malicious_client_ids]
             if not observable_updates:
-                observable_updates = [record_by_client[client_id].clean_update for client_id in selected_client_ids]
+                observable_updates = [record_by_client[client_id].local_update for client_id in selected_client_ids]
+            benign_selected_update_norm_mean = float(np.mean([np.linalg.norm(update) for update in observable_updates])) if observable_updates else 0.0
             if self.cfg.alie_oracle_all_updates:
                 self.logger.warning("ALIE oracle_all_updates reproduction mode is enabled")
-            total_samples = sum(record.num_samples for record in clean_records)
+            total_samples = sum(record.num_samples for record in local_records)
             uploads = []
             plaintext_updates_for_metrics = []
             plaintext_weights_for_metrics = []
@@ -112,8 +113,9 @@ class FederatedCoordinator:
                     "num_selected": len(selected_client_ids),
                     "num_malicious": len(malicious_selected),
                     "observable_updates": observable_updates,
-                    "oracle_all_updates": [record.clean_update for record in clean_records],
+                    "oracle_all_updates": [record.local_update for record in local_records],
                     "malicious_weight": aggregation_weight,
+                    "benign_selected_update_norm_mean": benign_selected_update_norm_mean,
                 }
                 upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
                 uploads.append(upload)
@@ -121,12 +123,12 @@ class FederatedCoordinator:
                     if clients[client_id].malicious:
                         reference_update = clients[client_id].attack_strategy.craft_update(
                             client_id,
-                            record.clean_update.copy(),
+                            record.local_update.copy(),
                             None,
                             attacker_context,
                         )
                     else:
-                        reference_update = record.clean_update.copy()
+                        reference_update = record.local_update.copy()
                     plaintext_updates_for_metrics.append(reference_update)
                     plaintext_weights_for_metrics.append(aggregation_weight)
             plaintext_reference_update = None
@@ -143,10 +145,22 @@ class FederatedCoordinator:
             test_loss, test_accuracy = evaluator.evaluate(server.model)
             dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
             self.logger.info(
-                "round=%s test_accuracy=%.6f test_loss=%.6f",
+                "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
+                "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
+                "attack_active=%s active_malicious_clients=%s poisoned_sample_count=%s effective_poison_ratio=%s current_ckks_profile=%s",
                 round_id,
                 test_accuracy,
                 test_loss,
+                dba_metrics.get("global_trigger_asr"),
+                dba_metrics.get("local_trigger_1_asr"),
+                dba_metrics.get("local_trigger_2_asr"),
+                dba_metrics.get("local_trigger_3_asr"),
+                dba_metrics.get("local_trigger_4_asr"),
+                dba_metrics.get("attack_active", False),
+                dba_metrics.get("active_malicious_clients", []),
+                dba_metrics.get("poisoned_sample_count", 0),
+                dba_metrics.get("effective_poison_ratio", 0.0),
+                profile_id,
             )
             profile_cfg = self.cfg.ckks_profiles[profile_id]
             round_row = {
@@ -175,15 +189,29 @@ class FederatedCoordinator:
                     {
                         "round": round_id,
                         "client_id": upload.client_id,
-                        "attack_name": self.cfg.attack_name if upload.metadata["is_malicious"] else "none",
+                        "attack_name": self.cfg.attack_name if (upload.metadata["is_malicious"] and (self.cfg.attack_name != "dba" or upload.metadata.get("dba_attack_active", False))) else "none",
                         "is_malicious": upload.metadata["is_malicious"],
                         "malicious_update_norm_before": upload.metadata["malicious_update_norm_before"],
                         "malicious_update_norm_after": upload.metadata["malicious_update_norm_after"],
                         "cosine_similarity_before_after": upload.metadata["cosine_before_after"],
                         "attack_computation_time": upload.metadata["attack_time"],
                         "attack_applied_before_encryption": upload.metadata["attack_applied_before_encryption"],
+                        "update_type": upload.metadata.get("update_type"),
+                        "dba_attack_active": upload.metadata.get("dba_attack_active", False),
+                        "dba_trigger_id": upload.metadata.get("dba_trigger_id"),
+                        "poisoned_sample_count": upload.metadata.get("poisoned_sample_count", 0),
+                        "dba_seen_sample_count": upload.metadata.get("dba_seen_sample_count", 0),
+                        "effective_poison_ratio": upload.metadata.get("effective_poison_ratio", 0.0),
+                        "dba_scale_factor": upload.metadata.get("dba_scale_factor", 0.0),
+                        "update_norm_before_scale": upload.metadata.get("update_norm_before_scale"),
+                        "update_norm_after_scale": upload.metadata.get("update_norm_after_scale"),
+                        "poisoned_update_norm": upload.metadata.get("poisoned_update_norm"),
+                        "benign_selected_update_norm_mean": upload.metadata.get("benign_selected_update_norm_mean"),
+                        "poisoned_to_benign_norm_ratio": upload.metadata.get("poisoned_to_benign_norm_ratio"),
                     }
                 )
+            _write_csv(os.path.join(self.cfg.output_dir, "fl_ckks_geochoke_metrics.csv"), round_rows)
+            _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "fl_ckks_geochoke_metrics.csv"), round_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
         return round_rows
