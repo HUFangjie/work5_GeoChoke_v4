@@ -16,14 +16,16 @@ class ALIEAttack(AttackStrategy):
         z: float | None = None,
         std_floor: float = 1e-6,
         oracle_all_updates: bool = False,
-        whitebox: bool = True,
+        whitebox: bool = False,
+        oracle_mean_replacement: bool = False,
         whitebox_z: float = 2.5,
         strength: float = 1.5,
     ) -> None:
         self.z = z
         self.std_floor = std_floor
-        self.oracle_all_updates = oracle_all_updates
-        self.whitebox = whitebox
+        self.oracle_all_updates = bool(oracle_all_updates)
+        self.whitebox = bool(whitebox)
+        self.oracle_mean_replacement = bool(oracle_mean_replacement)
         self.whitebox_z = float(whitebox_z)
         self.strength = float(strength)
 
@@ -35,7 +37,7 @@ class ALIEAttack(AttackStrategy):
         selected_count = max(malicious_count + 1, int(attacker_context.get("num_selected", malicious_count + 1)))
         theoretical_z = self._default_z(malicious_count, selected_count)
         z_value = self.z if self.z is not None else theoretical_z
-        if self.whitebox or attacker_context.get("whitebox", False):
+        if self.whitebox or attacker_context.get("whitebox", False) or self.oracle_mean_replacement or attacker_context.get("oracle_mean_replacement", False):
             z_value = max(float(z_value), self.whitebox_z)
         direction = self._attack_direction(mean, clean_update, attacker_context)
         crafted = mean - self.strength * float(z_value) * std * direction
@@ -45,7 +47,7 @@ class ALIEAttack(AttackStrategy):
         return crafted.astype(np.float64, copy=False)
 
     def _observations(self, clean_update: np.ndarray, attacker_context: dict[str, Any]) -> np.ndarray:
-        if self.whitebox or attacker_context.get("whitebox", False) or self.oracle_all_updates:
+        if self.oracle_all_updates or self.oracle_mean_replacement or attacker_context.get("oracle_mean_replacement", False):
             observable_updates = attacker_context.get("all_clean_updates") or attacker_context.get("oracle_all_updates")
         else:
             observable_updates = attacker_context.get("observable_updates")
@@ -54,7 +56,7 @@ class ALIEAttack(AttackStrategy):
 
     @staticmethod
     def _attack_direction(mean: np.ndarray, clean_update: np.ndarray, attacker_context: dict[str, Any]) -> np.ndarray:
-        clean_aggregate = attacker_context.get("clean_aggregate")
+        clean_aggregate = attacker_context.get("clean_aggregate") if attacker_context.get("oracle_mean_replacement", False) else None
         if clean_aggregate is not None:
             direction = np.sign(np.asarray(clean_aggregate, dtype=np.float64))
         else:

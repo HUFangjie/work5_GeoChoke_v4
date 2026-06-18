@@ -50,6 +50,7 @@ def _create_alie(cfg):
         cfg.alie_z,
         oracle_all_updates=cfg.alie_oracle_all_updates,
         whitebox=cfg.attack_whitebox,
+        oracle_mean_replacement=cfg.oracle_mean_replacement,
         whitebox_z=cfg.alie_whitebox_z,
         strength=cfg.alie_strength,
     )
@@ -62,6 +63,7 @@ def _create_fang_mean(cfg):
         cfg.fang_search_steps,
         whitebox=cfg.attack_whitebox,
         target_scale=cfg.fang_target_scale,
+        oracle_mean_replacement=cfg.oracle_mean_replacement,
     )
 
 

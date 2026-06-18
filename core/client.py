@@ -57,7 +57,8 @@ class Client:
     ) -> ClientUpload:
         before = clean_record.clean_update.copy()
         start_time = time.perf_counter()
-        if self.malicious:
+        attack_applied = bool(self.malicious and attacker_context.get("attack_enabled", True))
+        if attack_applied:
             final_update = self.attack_strategy.craft_update(
                 self.client_id,
                 before,
@@ -81,7 +82,7 @@ class Client:
             "malicious_update_norm_before": before_norm,
             "malicious_update_norm_after": after_norm,
             "cosine_before_after": cosine,
-            "attack_applied_before_encryption": bool(self.malicious),
+            "attack_applied_before_encryption": attack_applied,
             "is_malicious": bool(self.malicious),
         }
         return ClientUpload(

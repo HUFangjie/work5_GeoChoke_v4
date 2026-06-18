@@ -10,10 +10,14 @@ CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
 @dataclass
 class GeoChokeConfig:
     initial_profile_id: str = "high_precision"
-    warmup_rounds: int = 0
-    calibration_vectors: int = 2
-    perturbation_count: int = 2
+    warmup_rounds: int = 10
+    reference_profile_id: str = "medium_precision"
+    calibration_vectors: int = 32
+    calibration_repetitions: int = 8
+    perturbation_count: int = 32
     perturbation_scale: float = 1.0
+    gate_risk_threshold: float = 0.05
+    gate_kappa: float = 1.0
     lambda_: float = 1.0
     gamma: float = 1.0
     rho: float = 1.0
@@ -26,7 +30,7 @@ class ExperimentConfig:
     clients_per_round: int = 3
     min_clients_per_round: int = 2
     malicious_client_ids: List[int] = field(default_factory=lambda: [1])
-    num_rounds: int = 2
+    num_rounds: int = 50
     local_epochs: int = 1
     batch_size: int = 32
     local_lr: float = 0.01
@@ -49,17 +53,23 @@ class ExperimentConfig:
     geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
     output_dir: str = "./outputs"
     log_level: str = "INFO"
-    enable_plaintext_reference_metrics: bool = False
+    enable_plaintext_reference_metrics: bool = True
     pipeline_validation_rtol: float = 5e-2
     pipeline_validation_atol: float = 5e-2
     pipeline_validation_norm_ratio_tolerance: float = 5e-2
     alie_z: float | None = None
     alie_oracle_all_updates: bool = False
-    attack_whitebox: bool = True
+    attack_start_round: int = 10
+    attack_end_round: int = 39
+    attack_whitebox: bool = False
+    oracle_mean_replacement: bool = False
     alie_whitebox_z: float = 2.5
     alie_strength: float = 1.5
     fang_max_norm: float = 10.0
     fang_search_steps: int = 10
     fang_target_scale: float = 3.0
+    candidate_scales: List[float] = field(default_factory=lambda: [1.0, 0.5, 0.25, 0.1, 0.0])
+    gate_risk_threshold: float = 0.05
+    gate_kappa: float = 1.0
 
 CONFIG = ExperimentConfig()

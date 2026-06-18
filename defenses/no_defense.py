@@ -24,15 +24,22 @@ class NoDefense(DefenseStrategy):
         candidate_model: Any,
         current_profile_id: str,
         round_id: int,
+        **kwargs: Any,
     ) -> dict[str, Any]:
         return {
             "previous_cfi": None,
             "candidate_cfi": None,
             "fragility_injection_score": 0.0,
+            "cfi_injection": 0.0,
+            "candidate_functional_drift": 0.0,
+            "accepted_update_scale": 1.0,
+            "candidate_rejected": False,
             "current_calibrated_error_energy": None,
             "unconstrained_target_error_energy": None,
             "target_next_error_energy": None,
             "selected_next_profile": current_profile_id,
+            "next_profile_id": current_profile_id,
+            "current_profile_id": current_profile_id,
             "profile_switching_indicator": False,
             "defense_enabled": False,
         }

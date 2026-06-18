@@ -30,8 +30,11 @@ def test_defense_applies_selected_profile_to_next_round_only():
         def estimate(self, model):
             return 0.0 if getattr(model, "tag", "previous") == "previous" else 10.0
 
+        def functional_drift(self, previous_model, candidate_model):
+            return 0.0
+
     class DummyController:
-        def select(self, prev_cfi, cand_cfi, current_profile_id):
+        def select(self, prev_cfi, cand_cfi, current_profile_id, cfi_scale=1.0):
             return "b", {
                 "previous_cfi": prev_cfi,
                 "candidate_cfi": cand_cfi,

@@ -84,8 +84,24 @@ class AggregationServer:
         )
         candidate_model = self.model_factory()
         candidate_model.load_state_dict(candidate_state)
-        geo_metrics = self.defense.after_aggregate(self.model, candidate_model, profile_id, round_id)
-        self.model.load_state_dict(candidate_state)
+        geo_metrics = self.defense.after_aggregate(
+            self.model,
+            candidate_model,
+            profile_id,
+            round_id,
+            aggregate_update=decrypted_update,
+            server_lr=self.cfg.server_lr,
+            previous_state=previous_state,
+            model_factory=self.model_factory,
+            candidate_scales=getattr(self.cfg, "candidate_scales", [1.0]),
+        )
+        accepted_update_scale = float(geo_metrics.get("accepted_update_scale", 1.0))
+        final_state = self.codec.apply_update_to_state_dict(
+            previous_state,
+            decrypted_update,
+            step_size=self.cfg.server_lr * accepted_update_scale,
+        )
+        self.model.load_state_dict(final_state)
         reference_mse = None
         reference_max_error = None
         if plaintext_reference_update is not None:

@@ -15,15 +15,17 @@ class FangMeanAttack(AttackStrategy):
         aggregation: str = "weighted_mean",
         max_norm: float = 10.0,
         search_steps: int = 10,
-        whitebox: bool = True,
+        whitebox: bool = False,
         target_scale: float = 3.0,
+        oracle_mean_replacement: bool = False,
     ) -> None:
         if aggregation != "weighted_mean":
             raise ValueError("FangMeanAttack is only compatible with weighted_mean aggregation")
         self.max_norm = float(max_norm)
         self.search_steps = int(search_steps)
-        self.whitebox = whitebox
+        self.whitebox = bool(whitebox)
         self.target_scale = float(target_scale)
+        self.oracle_mean_replacement = bool(oracle_mean_replacement)
 
     def craft_update(self, client_id: int, clean_update: np.ndarray, global_model: Any, attacker_context: dict[str, Any]) -> np.ndarray:
         clean_update = np.asarray(clean_update, dtype=np.float64)
@@ -31,7 +33,7 @@ class FangMeanAttack(AttackStrategy):
         clean_norms = np.linalg.norm(observations, axis=1)
         base_norm = float(np.median(clean_norms)) if clean_norms.size else float(np.linalg.norm(clean_update))
         max_update_norm = max(base_norm, np.linalg.norm(clean_update), 1e-12) * self.max_norm
-        if self.whitebox or attacker_context.get("whitebox", False):
+        if self.oracle_mean_replacement or attacker_context.get("oracle_mean_replacement", False):
             candidate = self._whitebox_replacement(clean_update, attacker_context, max_update_norm)
         else:
             candidate = self._blackbox_mean_deviation(clean_update, observations, attacker_context, max_update_norm)
@@ -86,7 +88,7 @@ class FangMeanAttack(AttackStrategy):
         return best_candidate
 
     def _observations(self, clean_update: np.ndarray, attacker_context: dict[str, Any]) -> np.ndarray:
-        if self.whitebox or attacker_context.get("whitebox", False):
+        if self.oracle_mean_replacement or attacker_context.get("oracle_mean_replacement", False):
             updates = attacker_context.get("all_clean_updates") or attacker_context.get("oracle_all_updates")
         else:
             updates = attacker_context.get("observable_updates")

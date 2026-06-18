@@ -113,8 +113,9 @@ class FederatedCoordinator:
                     malicious_total_weight += weight
                 else:
                     benign_weighted_sum += weight * record.clean_update
-            if self.cfg.alie_oracle_all_updates:
-                self.logger.warning("ALIE oracle_all_updates reproduction mode is enabled")
+            attack_enabled = self.cfg.attack_start_round <= round_id <= self.cfg.attack_end_round
+            if self.cfg.alie_oracle_all_updates or self.cfg.oracle_mean_replacement:
+                self.logger.warning("oracle_mean_replacement/oracle_all_updates stress-test mode is enabled")
             total_samples = sum(record.num_samples for record in clean_records)
             uploads = []
             plaintext_updates_for_metrics = []
@@ -126,18 +127,25 @@ class FederatedCoordinator:
                     "num_selected": len(selected_client_ids),
                     "num_malicious": len(malicious_selected),
                     "observable_updates": observable_updates,
-                    "oracle_all_updates": all_clean_updates,
-                    "all_clean_updates": all_clean_updates,
-                    "clean_aggregate": clean_aggregate,
-                    "benign_weighted_sum": benign_weighted_sum,
                     "malicious_weight": aggregation_weight,
                     "malicious_total_weight": malicious_total_weight,
                     "whitebox": self.cfg.attack_whitebox,
+                    "oracle_mean_replacement": self.cfg.oracle_mean_replacement,
+                    "attack_enabled": attack_enabled,
                 }
+                if self.cfg.oracle_mean_replacement or self.cfg.alie_oracle_all_updates:
+                    attacker_context.update(
+                        {
+                            "oracle_all_updates": all_clean_updates,
+                            "all_clean_updates": all_clean_updates,
+                            "clean_aggregate": clean_aggregate,
+                            "benign_weighted_sum": benign_weighted_sum,
+                        }
+                    )
                 upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
                 uploads.append(upload)
                 if self.cfg.enable_plaintext_reference_metrics:
-                    if clients[client_id].malicious:
+                    if clients[client_id].malicious and attack_enabled:
                         reference_update = clients[client_id].attack_strategy.craft_update(
                             client_id,
                             record.clean_update.copy(),
