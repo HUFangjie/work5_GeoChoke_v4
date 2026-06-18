@@ -94,7 +94,17 @@ class FederatedCoordinator:
             malicious_selected = [client_id for client_id in selected_client_ids if client_id in self.cfg.malicious_client_ids]
             self.logger.info("round=%s profile=%s selected=%s", round_id, profile_id, selected_client_ids)
             global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
-            clean_records = [clients[client_id].compute_clean_update(global_state) for client_id in selected_client_ids]
+            client_attack_enabled = {
+                client_id: self._attack_enabled_for_client(client_id, round_id, client_id in self.cfg.malicious_client_ids)
+                for client_id in selected_client_ids
+            }
+            clean_records = [
+                clients[client_id].compute_clean_update(
+                    global_state,
+                    {"attack_enabled": client_attack_enabled[client_id], "round_id": round_id},
+                )
+                for client_id in selected_client_ids
+            ]
             if round_id < self.cfg.geochoke.warmup_rounds and hasattr(self.defense, "record_warmup_client_updates"):
                 self.defense.record_warmup_client_updates([record.clean_update for record in clean_records], round_id)
             if round_id == self.cfg.geochoke.warmup_rounds and hasattr(self.defense, "finalize_warmup_calibration"):
@@ -117,7 +127,7 @@ class FederatedCoordinator:
                     malicious_total_weight += weight
                 else:
                     benign_weighted_sum += weight * record.clean_update
-            attack_enabled = self.cfg.attack_start_round <= round_id <= self.cfg.attack_end_round
+            attack_enabled = any(client_attack_enabled.values())
             if self.cfg.alie_oracle_all_updates or self.cfg.oracle_mean_replacement:
                 self.logger.warning("oracle_mean_replacement/oracle_all_updates stress-test mode is enabled")
             total_samples = sum(record.num_samples for record in clean_records)
@@ -135,7 +145,8 @@ class FederatedCoordinator:
                     "malicious_total_weight": malicious_total_weight,
                     "whitebox": self.cfg.attack_whitebox,
                     "oracle_mean_replacement": self.cfg.oracle_mean_replacement,
-                    "attack_enabled": attack_enabled,
+                    "attack_enabled": client_attack_enabled[client_id],
+                    "round_id": round_id,
                 }
                 if self.cfg.oracle_mean_replacement or self.cfg.alie_oracle_all_updates:
                     attacker_context.update(
@@ -149,7 +160,7 @@ class FederatedCoordinator:
                 upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
                 uploads.append(upload)
                 if self.cfg.enable_plaintext_reference_metrics:
-                    if clients[client_id].malicious and attack_enabled:
+                    if clients[client_id].malicious and client_attack_enabled[client_id]:
                         reference_update = clients[client_id].attack_strategy.craft_update(
                             client_id,
                             record.clean_update.copy(),
@@ -172,6 +183,9 @@ class FederatedCoordinator:
                 plaintext_reference_update=plaintext_reference_update,
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
+            backdoor_metrics = {}
+            if hasattr(self.attack, "evaluate_asr"):
+                backdoor_metrics = self.attack.evaluate_asr(server.model, splits.test_loader, self.cfg.device)
             self.logger.info(
                 "round=%s test_accuracy=%.6f test_loss=%.6f",
                 round_id,
@@ -187,6 +201,7 @@ class FederatedCoordinator:
                 "train_loss": float(np.mean([upload.metadata["train_loss"] for upload in uploads])),
                 "test_loss": test_loss,
                 "test_accuracy": test_accuracy,
+                "clean_test_accuracy": test_accuracy,
                 "global_model_norm": model_l2_norm(server.model),
                 "profile_id": profile_id,
                 "poly_modulus_degree": profile_cfg["poly_modulus_degree"],
@@ -194,6 +209,14 @@ class FederatedCoordinator:
                 "coeff_modulus_bits": profile_cfg["coeff_mod_bit_sizes"],
                 "encryption_time": float(sum(upload.metadata["encryption_time"] for upload in uploads)),
                 "attack_type": effective_attack_name,
+                "attack_active": attack_enabled,
+                "active_malicious_clients": [client_id for client_id in malicious_selected if client_attack_enabled.get(client_id, False)],
+                "poisoned_sample_count": int(sum(upload.metadata.get("poisoned_sample_count", 0) for upload in uploads)),
+                "poison_ratio": getattr(self.cfg, "dba_poison_ratio", 0.0) if effective_attack_name == "dba" else 0.0,
+                "malicious_update_norm": float(np.mean([upload.metadata["malicious_update_norm_after"] for upload in uploads if upload.metadata["is_malicious"]])) if malicious_selected else 0.0,
+                "dba_scale_factor": getattr(self.cfg, "dba_scale_factor", 0.0) if effective_attack_name == "dba" else 0.0,
+                "current_ckks_profile": profile_id,
+                **backdoor_metrics,
                 **metrics,
             }
             round_rows.append(round_row)
@@ -214,6 +237,14 @@ class FederatedCoordinator:
         _write_csv(os.path.join(self.cfg.output_dir, "fl_ckks_geochoke_metrics.csv"), round_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
         return round_rows
+
+
+    def _attack_enabled_for_client(self, client_id: int, round_id: int, malicious: bool) -> bool:
+        if not malicious:
+            return False
+        if hasattr(self.attack, "is_active"):
+            return bool(self.attack.is_active(client_id, round_id))
+        return bool(self.cfg.attack_start_round <= round_id <= self.cfg.attack_end_round)
 
     def _validate_crypto_pipeline(self, dimension: int, output_dir: str) -> None:
         validator = AggregationPipelineValidator(

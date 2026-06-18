@@ -59,7 +59,7 @@ class ExperimentConfig:
     num_clients: int = 10
     clients_per_round: int = 10
     min_clients_per_round: int = 2
-    malicious_client_ids: List[int] = field(default_factory=lambda: [1])
+    malicious_client_ids: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
     num_rounds: int = 30
     local_epochs: int = 1
     batch_size: int = 32
@@ -69,8 +69,8 @@ class ExperimentConfig:
     dirichlet_alpha: float = 0.5
     crypto_backend_name: str = "ckks"
     defense_name: str = "geochoke"
-    attack_name: str = "fang_mean"  # none, alie, fang_mean, sign_flip_scaled
-    attack_type: str = "fang_mean"  # backward-compatible alias
+    attack_name: str = "dba"  # none, alie, fang_mean, sign_flip_scaled, dba
+    attack_type: str = "dba"  # backward-compatible alias
     aggregation: str = "weighted_mean"
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"
@@ -101,6 +101,22 @@ class ExperimentConfig:
     fang_max_norm: float = 1.0
     fang_search_steps: int = 10
     fang_target_scale: float = 1.0
+
+    dba_target_label: int = 2
+    dba_poison_ratio: float = 0.3125
+    dba_local_epochs: int = 10
+    dba_local_lr: float = 0.05
+    dba_scale_factor: float = 1.0
+    dba_attack_mode: str = "multi_shot"
+    dba_attack_start_round: int = 10
+    dba_attack_end_round: int = 29
+    dba_poison_interval: int = 1
+    dba_num_trigger_parts: int = 4
+    dba_trigger_size: int = 4
+    dba_trigger_gap: int = 2
+    dba_trigger_location: str = "top_left"
+    dba_trigger_value: float = 1.0
+
     candidate_scales: List[float] = field(default_factory=lambda: [1.0, 0.75, 0.5, 0.25, 0.1, 0.05, 0.0])
 
     # Backward-compatible aliases read by older scripts; GeoChokeConfig drives the actual gate.

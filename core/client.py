@@ -33,7 +33,22 @@ class Client:
         self.malicious = malicious
         self.cfg = cfg
 
-    def compute_clean_update(self, global_state: Dict[str, Any]) -> LocalUpdateRecord:
+    def compute_clean_update(self, global_state: Dict[str, Any], attacker_context: Dict[str, Any] | None = None) -> LocalUpdateRecord:
+        attacker_context = attacker_context or {}
+        if (
+            self.malicious
+            and attacker_context.get("attack_enabled", False)
+            and hasattr(self.attack_strategy, "craft_local_update")
+        ):
+            return self.attack_strategy.craft_local_update(
+                self.client_id,
+                global_state,
+                self.model_factory,
+                self.codec_factory,
+                self.loader,
+                self.cfg.device,
+                int(attacker_context.get("round_id", 0)),
+            )
         local_model = self.model_factory()
         local_model.load_state_dict(copy.deepcopy(global_state))
         trainer = LocalTrainer(self.cfg.local_epochs, self.cfg.local_lr, self.cfg.device)
@@ -84,6 +99,11 @@ class Client:
             "cosine_before_after": cosine,
             "attack_applied_before_encryption": attack_applied,
             "is_malicious": bool(self.malicious),
+            "poisoned_sample_count": clean_record.metadata.get("poisoned_sample_count", 0),
+            "poison_ratio": clean_record.metadata.get("poison_ratio", 0.0),
+            "dba_scale_factor": clean_record.metadata.get("dba_scale_factor", 0.0),
+            "dba_trigger_id": clean_record.metadata.get("dba_trigger_id"),
+            "dba_active": clean_record.metadata.get("dba_active", False),
         }
         return ClientUpload(
             client_id=self.client_id,

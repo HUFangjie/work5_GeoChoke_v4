@@ -75,7 +75,7 @@ It intentionally does not expose `decrypt_client_update(...)` or `decrypt_cipher
 
 1. Server samples clients and broadcasts the global model plus the current profile ID.
 2. Each client trains an independent model copy on its own MNIST split.
-3. Selected clients compute clean updates; malicious selected clients craft ALIE or FangMean updates before encryption.
+3. Selected clients compute clean updates; malicious selected clients either craft ALIE/FangMean-style update attacks before encryption or, for DBA, dynamically poison their own local batches with client-specific local triggers before local training.
 4. Every selected client encrypts chunks with real TenSEAL CKKS under the public context.
 5. The server computes weighted mean using CKKS scalar multiplication and ciphertext addition only.
 6. The authorized service decrypts only the aggregate ciphertext.
@@ -89,7 +89,7 @@ Original Fang attacks are usually framed against robust aggregators such as Krum
 
 ## Configuration
 
-All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default is a 30-round MNIST setup with attack rounds 10--29, `fang_mean` configured for client 1, `attack_whitebox=False`, and three CKKS profiles. With `oracle_mean_replacement=False`, the effective non-oracle attack is logged as `sign_flip_scaled`.
+All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default is a 30-round MNIST setup with attack rounds 10--29, four malicious clients, `attack_name="dba"`, `attack_whitebox=False`, and three CKKS profiles. DBA uses four non-overlapping local trigger parts and target label `2`.
 
 For a fuller experiment, edit `config.py` and increase values such as:
 
@@ -117,6 +117,7 @@ The coordinator logs each round's test accuracy and writes:
 - `client_partitions.csv`: sample count, label distribution, malicious flag per client.
 - `fl_ckks_geochoke_metrics.csv`: unified per-round FL, CKKS, and GeoChoke metrics.
 - `attack_metrics.csv`: per-client attack norm/cosine/time metrics.
+- DBA round metrics in `fl_ckks_geochoke_metrics.csv`: `clean_test_accuracy`, `global_trigger_asr`, `local_trigger_1_asr` ... `local_trigger_4_asr`, `attack_active`, `active_malicious_clients`, `poisoned_sample_count`, `poison_ratio`, `malicious_update_norm`, and `dba_scale_factor`.
 - `crypto_calibration/direct_profile_calibration.csv`: per-profile offline CKKS aggregation-pipeline residual MSE, max residual, relative L2, norm ratio, residual mean, and residual standard deviation.
 - `crypto_calibration/aggregation_pipeline_validation.csv`: full Enc → plaintext-weight multiply → ciphertext addition → aggregate decrypt validation metrics, including norm ratio.
 - `crypto_calibration/reference_residual_bank.npz`: fixed reference residual samples used to build the CFI perturbation bank.
@@ -131,6 +132,13 @@ Built-in components are registered in `factories/defaults.py`. The coordinator d
 ### No-defense mode
 
 Set `defense_name = "none"` in `config.py` to disable GeoChoke profile adaptation while keeping the encrypted aggregation pipeline unchanged. `NoDefense` always returns the configured initial CKKS profile and records `defense_enabled=False` in round metrics.
+
+
+### Distributed Backdoor Attack (DBA)
+
+Set `attack_name = "dba"` in `config.py` to enable the standard distributed backdoor attack. DBA requires at least `dba_num_trigger_parts` malicious clients. Each malicious client is permanently bound to a different non-overlapping local trigger part; training-time poisoning applies only that client's local trigger to a random `dba_poison_ratio` subset of its own local batch and relabels those samples to `dba_target_label`. Evaluation computes ASR with each local trigger separately and with the global trigger formed by the union of all local trigger parts. No client receives another client's data or plaintext update, and the resulting malicious update still goes through the normal CKKS encryption and ciphertext aggregation path.
+
+Key DBA configuration fields include `dba_attack_mode` (`"multi_shot"` or `"single_shot"`), `dba_attack_start_round`, `dba_attack_end_round`, `dba_poison_interval`, `dba_local_epochs`, `dba_local_lr`, `dba_scale_factor`, `dba_num_trigger_parts`, `dba_trigger_size`, `dba_trigger_gap`, `dba_trigger_location`, and `dba_trigger_value`.
 
 ### Oracle mean-replacement stress-test mode
 

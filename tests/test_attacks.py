@@ -59,3 +59,39 @@ def test_non_oracle_fang_is_reported_as_sign_flip_scaled():
 def test_sign_flip_scaled_attack_alias_is_explicit():
     attack = SignFlipScaledAttack(max_norm=1.0)
     assert attack.effective_attack_name == "sign_flip_scaled"
+
+
+def test_dba_local_triggers_are_disjoint_and_global_is_union():
+    import torch
+    from config import ExperimentConfig
+    from attacks.dba import DBAAttack
+
+    cfg = ExperimentConfig()
+    cfg.attack_name = "dba"
+    cfg.malicious_client_ids = [1, 2, 3, 4]
+    attack = DBAAttack(cfg)
+    image = torch.zeros(1, 28, 28)
+    local_ones = []
+    occupied = set()
+    for trigger_id in range(cfg.dba_num_trigger_parts):
+        triggered = attack.apply_local_trigger(image, trigger_id)
+        coords = set(map(tuple, torch.nonzero(triggered[0] > 0.0).tolist()))
+        assert coords
+        assert not occupied.intersection(coords)
+        occupied.update(coords)
+        local_ones.append(coords)
+    global_triggered = attack.apply_global_trigger(image)
+    global_coords = set(map(tuple, torch.nonzero(global_triggered[0] > 0.0).tolist()))
+    assert global_coords == set().union(*local_ones)
+
+
+def test_dba_requires_enough_malicious_clients():
+    import pytest
+    from config import ExperimentConfig
+    from attacks.dba import DBAAttack
+
+    cfg = ExperimentConfig()
+    cfg.malicious_client_ids = [1]
+    cfg.dba_num_trigger_parts = 4
+    with pytest.raises(ValueError):
+        DBAAttack(cfg)

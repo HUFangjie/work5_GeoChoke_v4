@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from attacks.alie import ALIEAttack
+from attacks.dba import DBAAttack
 from attacks.fang import FangMeanAttack, SignFlipScaledAttack
 from attacks.no_attack import NoAttack
 from core.decryption_service import AuthorizedDecryptionService
@@ -32,6 +33,7 @@ def register_defaults() -> None:
     ATTACK_REGISTRY.setdefault("alie", _create_alie)
     ATTACK_REGISTRY.setdefault("fang_mean", _create_fang_mean)
     ATTACK_REGISTRY.setdefault("sign_flip_scaled", _create_sign_flip_scaled)
+    ATTACK_REGISTRY.setdefault("dba", _create_dba)
     CRYPTO_REGISTRY.setdefault("ckks", _create_ckks)
     DEFENSE_REGISTRY.setdefault("geochoke", _create_geochoke)
     DEFENSE_REGISTRY.setdefault("none", _create_no_defense)
@@ -66,6 +68,10 @@ def _create_fang_mean(cfg):
         target_scale=cfg.fang_target_scale,
         oracle_mean_replacement=cfg.oracle_mean_replacement,
     )
+
+
+def _create_dba(cfg):
+    return DBAAttack(cfg)
 
 
 def _create_sign_flip_scaled(cfg):
