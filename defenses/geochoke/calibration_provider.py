@@ -69,7 +69,18 @@ class CalibrationTensorProvider:
         loss_fn = torch.nn.CrossEntropyLoss()
         images, labels = images.to(self.device), labels.to(self.device)
         opt.zero_grad()
-        loss = loss_fn(local(images), labels)
+        logits = local(images)
+        num_classes = int(logits.shape[1])
+        labels = labels.long()
+        valid_labels = (labels >= 0) & (labels < num_classes)
+        if bool(valid_labels.all()):
+            training_labels = labels
+        else:
+            # Proxy data is intentionally unlabeled (MNISTProvider returns -1).
+            # Use deterministic model pseudo-labels so calibration can estimate a
+            # realistic one-step update without requiring private/proxy labels.
+            training_labels = logits.detach().argmax(dim=1)
+        loss = loss_fn(logits, training_labels)
         loss.backward()
         opt.step()
         return self.codec.flatten_state_dict(local.state_dict()) - self.codec.flatten_state_dict(model.state_dict())
