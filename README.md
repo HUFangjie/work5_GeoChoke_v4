@@ -131,3 +131,7 @@ Built-in components are registered in `factories/defaults.py`. The coordinator d
 ### No-defense mode
 
 Set `defense_name = "none"` in `config.py` to disable GeoChoke profile adaptation while keeping the encrypted aggregation pipeline unchanged. `NoDefense` always returns the configured initial CKKS profile and records `defense_enabled=False` in round metrics.
+
+### White-box attack mode
+
+`attack_whitebox = True` allows ALIE and FangMean to use all selected clients' clean updates, the clean aggregate direction, per-client aggregation weights, and the malicious total aggregation weight before encryption. ALIE uses these values to strengthen coordinate-wise deviation against the clean aggregate direction. FangMean solves a weighted-mean replacement objective toward a reversed aggregate target subject to its norm budget. Disable this by setting `attack_whitebox = False` in `config.py`.

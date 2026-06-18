@@ -46,11 +46,23 @@ def _create_no_attack(cfg):
 
 
 def _create_alie(cfg):
-    return ALIEAttack(cfg.alie_z, oracle_all_updates=cfg.alie_oracle_all_updates)
+    return ALIEAttack(
+        cfg.alie_z,
+        oracle_all_updates=cfg.alie_oracle_all_updates,
+        whitebox=cfg.attack_whitebox,
+        whitebox_z=cfg.alie_whitebox_z,
+        strength=cfg.alie_strength,
+    )
 
 
 def _create_fang_mean(cfg):
-    return FangMeanAttack(cfg.aggregation, cfg.fang_max_norm, cfg.fang_search_steps)
+    return FangMeanAttack(
+        cfg.aggregation,
+        cfg.fang_max_norm,
+        cfg.fang_search_steps,
+        whitebox=cfg.attack_whitebox,
+        target_scale=cfg.fang_target_scale,
+    )
 
 
 def _create_ckks(cfg):

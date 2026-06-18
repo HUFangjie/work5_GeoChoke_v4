@@ -97,6 +97,22 @@ class FederatedCoordinator:
             clean_records = [clients[client_id].compute_clean_update(global_state) for client_id in selected_client_ids]
             record_by_client = {record.client_id: record for record in clean_records}
             observable_updates = [record_by_client[client_id].clean_update for client_id in malicious_selected]
+            client_weights = {
+                record.client_id: (record.num_samples / sum(r.num_samples for r in clean_records))
+                for record in clean_records
+            }
+            clean_aggregate = np.zeros_like(clean_records[0].clean_update) if clean_records else None
+            benign_weighted_sum = np.zeros_like(clean_records[0].clean_update) if clean_records else None
+            malicious_total_weight = 0.0
+            all_clean_updates = []
+            for record in clean_records:
+                weight = client_weights[record.client_id]
+                all_clean_updates.append(record.clean_update)
+                clean_aggregate += weight * record.clean_update
+                if record.client_id in malicious_selected:
+                    malicious_total_weight += weight
+                else:
+                    benign_weighted_sum += weight * record.clean_update
             if self.cfg.alie_oracle_all_updates:
                 self.logger.warning("ALIE oracle_all_updates reproduction mode is enabled")
             total_samples = sum(record.num_samples for record in clean_records)
@@ -110,8 +126,13 @@ class FederatedCoordinator:
                     "num_selected": len(selected_client_ids),
                     "num_malicious": len(malicious_selected),
                     "observable_updates": observable_updates,
-                    "oracle_all_updates": [record.clean_update for record in clean_records],
+                    "oracle_all_updates": all_clean_updates,
+                    "all_clean_updates": all_clean_updates,
+                    "clean_aggregate": clean_aggregate,
+                    "benign_weighted_sum": benign_weighted_sum,
                     "malicious_weight": aggregation_weight,
+                    "malicious_total_weight": malicious_total_weight,
+                    "whitebox": self.cfg.attack_whitebox,
                 }
                 upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
                 uploads.append(upload)

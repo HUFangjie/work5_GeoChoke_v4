@@ -55,7 +55,11 @@ class ExperimentConfig:
     pipeline_validation_norm_ratio_tolerance: float = 5e-2
     alie_z: float | None = None
     alie_oracle_all_updates: bool = False
-    fang_max_norm: float = 5.0
-    fang_search_steps: int = 6
+    attack_whitebox: bool = True
+    alie_whitebox_z: float = 2.5
+    alie_strength: float = 1.5
+    fang_max_norm: float = 10.0
+    fang_search_steps: int = 10
+    fang_target_scale: float = 3.0
 
 CONFIG = ExperimentConfig()
