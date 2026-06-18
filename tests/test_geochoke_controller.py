@@ -34,7 +34,7 @@ def test_defense_applies_selected_profile_to_next_round_only():
             return 0.0
 
     class DummyController:
-        def select(self, prev_cfi, cand_cfi, current_profile_id, cfi_scale=1.0):
+        def select(self, prev_cfi, cand_cfi, current_profile_id, **kwargs):
             return "b", {
                 "previous_cfi": prev_cfi,
                 "candidate_cfi": cand_cfi,

@@ -8,7 +8,13 @@ from attacks.base import AttackStrategy
 
 
 class FangMeanAttack(AttackStrategy):
-    """White-box mean-aggregation Fang-style local model poisoning attack."""
+    """Mean-aggregation attack wrapper.
+
+    With ``oracle_mean_replacement=True`` this runs the explicit oracle pressure
+    test that uses clean aggregate information. Without oracle access it is an
+    explicitly named sign-flip-scaled fallback and does not claim to be the
+    original Fang robust-aggregator attack.
+    """
 
     def __init__(
         self,
@@ -26,6 +32,7 @@ class FangMeanAttack(AttackStrategy):
         self.whitebox = bool(whitebox)
         self.target_scale = float(target_scale)
         self.oracle_mean_replacement = bool(oracle_mean_replacement)
+        self.effective_attack_name = "oracle_mean_replacement" if self.oracle_mean_replacement else "sign_flip_scaled"
 
     def craft_update(self, client_id: int, clean_update: np.ndarray, global_model: Any, attacker_context: dict[str, Any]) -> np.ndarray:
         clean_update = np.asarray(clean_update, dtype=np.float64)
@@ -67,6 +74,7 @@ class FangMeanAttack(AttackStrategy):
         return -float(np.linalg.norm(simulated - target_aggregate))
 
     def _blackbox_mean_deviation(self, clean_update: np.ndarray, observations: np.ndarray, attacker_context: dict[str, Any], max_update_norm: float) -> np.ndarray:
+        self.effective_attack_name = "sign_flip_scaled"
         benign_center = observations.mean(axis=0)
         center_norm = np.linalg.norm(benign_center)
         if center_norm <= 1e-12:
@@ -101,6 +109,15 @@ class FangMeanAttack(AttackStrategy):
         if max_norm > 0.0 and norm > max_norm:
             return update * (max_norm / (norm + 1e-12))
         return update
+
+
+
+class SignFlipScaledAttack(FangMeanAttack):
+    """Explicit non-oracle sign-flip-scaled poisoning baseline."""
+
+    def __init__(self, aggregation: str = "weighted_mean", max_norm: float = 10.0, search_steps: int = 10, target_scale: float = 3.0) -> None:
+        super().__init__(aggregation=aggregation, max_norm=max_norm, search_steps=search_steps, target_scale=target_scale, oracle_mean_replacement=False)
+        self.effective_attack_name = "sign_flip_scaled"
 
 
 FangAttack = FangMeanAttack

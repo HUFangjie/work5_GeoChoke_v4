@@ -42,7 +42,7 @@ class DummyDefense:
     def get_profile_for_round(self, round_id):
         return self.profile
 
-    def after_aggregate(self, previous_model, candidate_model, current_profile_id, round_id):
+    def after_aggregate(self, previous_model, candidate_model, current_profile_id, round_id, **kwargs):
         return {
             "previous_cfi": 0.0,
             "candidate_cfi": 0.0,
@@ -51,6 +51,10 @@ class DummyDefense:
             "target_next_error_energy": 0.0,
             "selected_next_profile": self.profile,
             "profile_switching_indicator": False,
+            "accepted_update_scale": 1.0,
+            "candidate_rejected": False,
+            "rollback_triggered": False,
+            "next_profile_id": self.profile,
         }
 
 
@@ -79,6 +83,16 @@ def test_dummy_dataset_and_defense_registered_without_coordinator_changes():
     cfg.defense_name = "dummy_defense"
     assert isinstance(create_dataset_provider(cfg), DummyDatasetProvider)
     assert isinstance(create_defense(cfg), DummyDefense)
+
+
+def test_sign_flip_scaled_attack_factory_name():
+    from factories.attack_factory import create_attack
+
+    cfg = ExperimentConfig(ckks_profiles=CKKS_PROFILES)
+    cfg.attack_name = "sign_flip_scaled"
+    cfg.attack_type = "sign_flip_scaled"
+    attack = create_attack(cfg)
+    assert getattr(attack, "effective_attack_name", None) == "sign_flip_scaled"
 
 
 def test_no_defense_factory_keeps_initial_profile():

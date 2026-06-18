@@ -1,7 +1,7 @@
 import numpy as np
 
 from attacks.alie import ALIEAttack
-from attacks.fang import FangMeanAttack
+from attacks.fang import FangMeanAttack, SignFlipScaledAttack
 from attacks.no_attack import NoAttack
 
 
@@ -45,3 +45,17 @@ def test_oracle_fang_targets_reversed_aggregate_direction():
     crafted = FangMeanAttack(max_norm=100.0, target_scale=2.0, oracle_mean_replacement=True).craft_update(2, updates[2], None, ctx)
     poisoned = benign_weighted_sum + weights[2] * crafted
     assert np.dot(poisoned, clean_aggregate) < 0.0
+
+
+def test_non_oracle_fang_is_reported_as_sign_flip_scaled():
+    clean = np.array([1.0, -2.0, 3.0])
+    ctx = {"observable_updates": [clean], "num_selected": 3, "num_malicious": 1, "malicious_weight": 1 / 3}
+    attack = FangMeanAttack(max_norm=1.0, oracle_mean_replacement=False)
+    crafted = attack.craft_update(1, clean, None, ctx)
+    assert attack.effective_attack_name == "sign_flip_scaled"
+    assert np.dot(crafted, clean) < 0.0
+
+
+def test_sign_flip_scaled_attack_alias_is_explicit():
+    attack = SignFlipScaledAttack(max_norm=1.0)
+    assert attack.effective_attack_name == "sign_flip_scaled"

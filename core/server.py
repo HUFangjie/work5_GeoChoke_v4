@@ -96,20 +96,30 @@ class AggregationServer:
             candidate_scales=getattr(self.cfg, "candidate_scales", [1.0]),
         )
         accepted_update_scale = float(geo_metrics.get("accepted_update_scale", 1.0))
-        final_state = self.codec.apply_update_to_state_dict(
-            previous_state,
-            decrypted_update,
-            step_size=self.cfg.server_lr * accepted_update_scale,
-        )
-        self.model.load_state_dict(final_state)
+        rollback_state = None
+        if bool(geo_metrics.get("rollback_triggered", False)) and hasattr(self.defense, "get_pending_rollback_state"):
+            rollback_state = self.defense.get_pending_rollback_state()
+        if rollback_state is not None:
+            self.model.load_state_dict(rollback_state)
+        else:
+            final_state = self.codec.apply_update_to_state_dict(
+                previous_state,
+                decrypted_update,
+                step_size=self.cfg.server_lr * accepted_update_scale,
+            )
+            self.model.load_state_dict(final_state)
         reference_mse = None
         reference_max_error = None
+        actual_ckks_residual_norm = None
+        ckks_residual_update_ratio = None
         if plaintext_reference_update is not None:
             if plaintext_reference_update.shape != decrypted_update.shape:
                 raise ValueError("plaintext reference update dimension mismatch")
             difference = decrypted_update - plaintext_reference_update
             reference_mse = float(np.mean(difference * difference))
             reference_max_error = float(np.max(np.abs(difference)))
+            actual_ckks_residual_norm = float(np.linalg.norm(difference))
+            ckks_residual_update_ratio = actual_ckks_residual_norm / max(float(np.linalg.norm(decrypted_update)), 1e-12)
         serialized = self.crypto_backend.serialize(aggregate_ciphertext)
         return decrypted_update, {
             "encrypted_aggregation_time": aggregation_time,
@@ -117,6 +127,8 @@ class AggregationServer:
             "ciphertext_block_count": aggregate_ciphertext.block_count,
             "serialized_ciphertext_bytes": sum(len(chunk["payload"]) for chunk in serialized["chunks"]),
             "aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
+            "actual_ckks_residual_norm": actual_ckks_residual_norm,
+            "ckks_residual_update_ratio": ckks_residual_update_ratio,
             "aggregate_ckks_mse": reference_mse,
             "aggregate_maximum_absolute_error": reference_max_error,
             **geo_metrics,

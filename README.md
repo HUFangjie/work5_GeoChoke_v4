@@ -80,16 +80,16 @@ It intentionally does not expose `decrypt_client_update(...)` or `decrypt_cipher
 5. The server computes weighted mean using CKKS scalar multiplication and ciphertext addition only.
 6. The authorized service decrypts only the aggregate ciphertext.
 7. The server builds aggregate-level candidate models from scales such as `1.0`, `0.5`, `0.25`, `0.1`, and `0.0`.
-8. GeoChoke gates the current aggregate using only the previous global model, decrypted aggregate update, unlabeled proxy set, and fixed CKKS residual perturbation bank. It selects the largest safe scale and may reject the current aggregate with scale `0.0`.
-9. GeoChoke then selects the next-round profile in normalized log-energy space; the accepted scaled candidate becomes the next global model.
+8. GeoChoke gates the current aggregate using only the previous global model, decrypted aggregate update, unlabeled proxy set, and fixed CKKS residual perturbation bank. It computes separately normalized drift, CFI, and CFI-injection risks, selects the largest candidate scale whose normalized risk is at most `1.0`, and may reject the current aggregate with scale `0.0`.
+9. GeoChoke maintains CUSUM cumulative risk plus a last-safe checkpoint; sustained abnormal risk can trigger rollback and a recovery period with capped update scale. It then selects the next-round profile via normalized log-energy control and one-step high→medium→low / low→medium→high transitions.
 
 ## Fang Mean adaptation
 
-Original Fang attacks are usually framed against robust aggregators such as Krum or trimmed mean. This project's aggregator is CKKS weighted mean, so `FangMeanAttack` performs a mean-compatible bounded search that maximizes aggregate deviation from compromised-client observations under a norm budget. The default threat model does **not** expose benign clients' plaintext updates or the clean aggregate to the attacker. The optional `oracle_mean_replacement=True` mode keeps the older mean-replacement oracle only as an explicit strongest pressure test. Krum/TrimmedMean-specific Fang variants must reject `aggregation="weighted_mean"` rather than silently running the wrong objective.
+Original Fang attacks are usually framed against robust aggregators such as Krum or trimmed mean. This project's aggregator is CKKS weighted mean. Without oracle access, the non-oracle fallback is explicitly reported as `sign_flip_scaled` rather than being mislabeled as standard Fang. The default threat model does **not** expose benign clients' plaintext updates or the clean aggregate to the attacker. The optional `oracle_mean_replacement=True` mode keeps the older mean-replacement oracle only as an explicit strongest pressure test. Krum/TrimmedMean-specific Fang variants must reject `aggregation="weighted_mean"` rather than silently running the wrong objective.
 
 ## Configuration
 
-All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default is a 50-round MNIST setup with attack rounds 10--39, ALIE enabled for client 1, `attack_whitebox=False`, and three CKKS profiles.
+All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default is a 30-round MNIST setup with attack rounds 10--29, `fang_mean` configured for client 1, `attack_whitebox=False`, and three CKKS profiles. With `oracle_mean_replacement=False`, the effective non-oracle attack is logged as `sign_flip_scaled`.
 
 For a fuller experiment, edit `config.py` and increase values such as:
 
@@ -134,4 +134,4 @@ Set `defense_name = "none"` in `config.py` to disable GeoChoke profile adaptatio
 
 ### Oracle mean-replacement stress-test mode
 
-`attack_whitebox` defaults to `False`; ordinary ALIE/FangMean attacks receive only compromised-client observable updates and round metadata. Set `attack_start_round` and `attack_end_round` in `config.py` to bound when malicious clients actually modify updates. If you intentionally want the older oracle pressure test, set `oracle_mean_replacement = True`; only then do attack modules receive `all_clean_updates`, `clean_aggregate`, and `benign_weighted_sum`. This oracle mode is not the default threat model and is never used by GeoChoke's defense decision.
+`attack_whitebox` defaults to `False`; ordinary ALIE/FangMean attacks receive only compromised-client observable updates and round metadata. Set `attack_start_round` and `attack_end_round` in `config.py` to bound when malicious clients actually modify updates. If you intentionally want the older oracle pressure test, set `oracle_mean_replacement = True`; only then do attack modules receive `all_clean_updates`, `clean_aggregate`, and `benign_weighted_sum`. This oracle mode is not the default threat model and is never used by GeoChoke's defense decision. Per-round metrics include raw and accepted candidate risk, normalized drift/CFI/injection risks, CUSUM score, rollback flag, accepted update scale, CKKS residual ratio, and profile transition reason.

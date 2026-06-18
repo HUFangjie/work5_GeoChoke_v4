@@ -95,6 +95,10 @@ class FederatedCoordinator:
             self.logger.info("round=%s profile=%s selected=%s", round_id, profile_id, selected_client_ids)
             global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
             clean_records = [clients[client_id].compute_clean_update(global_state) for client_id in selected_client_ids]
+            if round_id < self.cfg.geochoke.warmup_rounds and hasattr(self.defense, "record_warmup_client_updates"):
+                self.defense.record_warmup_client_updates([record.clean_update for record in clean_records], round_id)
+            if round_id == self.cfg.geochoke.warmup_rounds and hasattr(self.defense, "finalize_warmup_calibration"):
+                self.defense.finalize_warmup_calibration()
             record_by_client = {record.client_id: record for record in clean_records}
             observable_updates = [record_by_client[client_id].clean_update for client_id in malicious_selected]
             client_weights = {
@@ -175,6 +179,7 @@ class FederatedCoordinator:
                 test_loss,
             )
             profile_cfg = self.cfg.ckks_profiles[profile_id]
+            effective_attack_name = getattr(self.attack, "effective_attack_name", getattr(self.cfg, "attack_name", self.cfg.attack_type))
             round_row = {
                 "round": round_id,
                 "selected_clients": selected_client_ids,
@@ -188,7 +193,7 @@ class FederatedCoordinator:
                 "scale_bits": profile_cfg["global_scale_bits"],
                 "coeff_modulus_bits": profile_cfg["coeff_mod_bit_sizes"],
                 "encryption_time": float(sum(upload.metadata["encryption_time"] for upload in uploads)),
-                "attack_type": getattr(self.cfg, "attack_name", self.cfg.attack_type),
+                "attack_type": effective_attack_name,
                 **metrics,
             }
             round_rows.append(round_row)
@@ -197,7 +202,7 @@ class FederatedCoordinator:
                     {
                         "round": round_id,
                         "client_id": upload.client_id,
-                        "attack_type": getattr(self.cfg, "attack_name", self.cfg.attack_type) if upload.metadata["is_malicious"] else "none",
+                        "attack_type": effective_attack_name if upload.metadata["is_malicious"] else "none",
                         "is_malicious": upload.metadata["is_malicious"],
                         "malicious_update_norm_before": upload.metadata["malicious_update_norm_before"],
                         "malicious_update_norm_after": upload.metadata["malicious_update_norm_after"],
