@@ -46,12 +46,13 @@ class GeoChokeController:
             raise ValueError("CFI values must be finite")
         gamma = float(self.cfg.gamma)
         rho = float(self.cfg.rho)
-        if gamma + rho <= 0.0:
-            raise ValueError("GeoChoke gamma + rho must be positive")
+        lambda_value = float(self.cfg.lambda_)
+        if lambda_value <= 0.0 or gamma <= 0.0 or rho <= 0.0:
+            raise ValueError("GeoChoke lambda_, gamma, and rho must each be positive")
         fragility_delta = max(0.0, float(cand_cfi) - float(prev_cfi))
         current_energy = float(self.calibration[current_profile_id]["mse"])
         unconstrained_target = (
-            float(self.cfg.lambda_) * fragility_delta
+            lambda_value * fragility_delta
             - float(prev_cfi)
             + 2.0 * rho * current_energy
         ) / (2.0 * (gamma + rho))

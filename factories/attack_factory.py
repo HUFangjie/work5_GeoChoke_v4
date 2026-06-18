@@ -20,7 +20,7 @@ def register_attack(name: str) -> Callable[[Callable[[Any], Any]], Callable[[Any
 
 def create_attack(cfg: Any) -> Any:
     _ensure_default_registrations()
-    name = getattr(cfg, "attack_name", getattr(cfg, "attack_type", "none"))
+    name = cfg.attack_name
     try:
         return ATTACK_REGISTRY[name](cfg)
     except KeyError as exc:

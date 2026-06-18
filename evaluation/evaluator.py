@@ -38,7 +38,7 @@ class Evaluator:
         return hits / max(1, n)
 
     def evaluate_dba(self, model, attack, cfg, profile_id, uploads):
-        if getattr(cfg, "attack_name", getattr(cfg, "attack_type", "none")) != "dba" or not hasattr(attack, "trigger"):
+        if cfg.attack_name != "dba" or not hasattr(attack, "trigger"):
             return {}
         target = int(cfg.dba_target_label)
         metrics = {

@@ -89,15 +89,15 @@ Original Fang attacks are usually framed against robust aggregators such as Krum
 
 ## Configuration
 
-All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default is a quick smoke setup: 3 clients, 2 rounds, a small MNIST subset, ALIE enabled for client 1, and three CKKS profiles.
+All experiment settings live in `config.py`; there are no YAML/JSON/Hydra configuration files. The default enables a DBA MNIST run with four malicious clients, explicit GeoChoke reference-profile calibration, and three CKKS profiles.
 
 For a fuller experiment, edit `config.py` and increase values such as:
 
 ```python
 quick_data_limit = 6000
-num_rounds = 10
+num_rounds = 30
 clients_per_round = 5
-attack_type = "fang_mean"  # or "alie" / "none"
+attack_name = "fang_mean"  # or "alie" / "dba" / "none"
 ```
 
 ## Installation and run
@@ -119,7 +119,9 @@ The coordinator logs each round's test accuracy and writes:
 - `attack_metrics.csv`: per-client attack norm/cosine/time metrics.
 - `crypto_calibration/direct_profile_calibration.csv`: per-profile direct CKKS residual MSE, max residual, relative L2, residual mean, and residual standard deviation.
 - `crypto_calibration/aggregation_pipeline_validation.csv`: full Enc → plaintext-weight multiply → ciphertext addition → aggregate decrypt validation metrics, including norm ratio.
-- `crypto_calibration/reference_residual_bank.npz`: fixed reference residual samples used to build the CFI perturbation bank.
+- `crypto_calibration/reference_residual_bank.npz`: direct residual samples separated by calibrated profile.
+- `crypto_calibration/calibration_tensor_sources.csv`: representative calibration tensor source and statistic records.
+- `crypto_calibration/perturbation_bank.csv`: fixed protocol-aligned reference perturbation bank with selected ξ_m norms, source profile, and SHA-256 hashes.
 
 Plaintext aggregate reference metrics are optional experiment-only validation fields computed by the coordinator-side experiment verifier and are never used to update the global model.
 

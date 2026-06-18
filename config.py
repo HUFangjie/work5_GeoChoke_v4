@@ -10,9 +10,9 @@ CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
 @dataclass
 class GeoChokeConfig:
     initial_profile_id: str = "high_precision"
-    warmup_rounds: int = 0
-    calibration_vectors: int = 2
-    perturbation_count: int = 2
+    reference_profile_id: str = "high_precision"
+    calibration_vectors: int = 8
+    perturbation_count: int = 8
     perturbation_scale: float = 1.0
     lambda_: float = 1.0
     gamma: float = 1.0
@@ -23,10 +23,10 @@ class ExperimentConfig:
     seed: int = 7
     device: str = "cpu"
     num_clients: int = 5
-    clients_per_round: int = 3
+    clients_per_round: int = 5
     min_clients_per_round: int = 2
     malicious_client_ids: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
-    num_rounds: int = 2
+    num_rounds: int = 30
     local_epochs: int = 1
     batch_size: int = 32
     local_lr: float = 0.01
@@ -36,7 +36,6 @@ class ExperimentConfig:
     crypto_backend_name: str = "ckks"
     defense_name: str = "geochoke"
     attack_name: str = "dba"  # none, alie, fang_mean, dba
-    attack_type: str = "dba"  # backward-compatible alias
     aggregation: str = "weighted_mean"
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"

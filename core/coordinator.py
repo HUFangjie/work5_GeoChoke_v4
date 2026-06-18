@@ -96,7 +96,9 @@ class FederatedCoordinator:
             global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
             clean_records = [clients[client_id].compute_clean_update(global_state, round_id) for client_id in selected_client_ids]
             record_by_client = {record.client_id: record for record in clean_records}
-            observable_updates = [record_by_client[client_id].clean_update for client_id in malicious_selected]
+            observable_updates = [record_by_client[client_id].clean_update for client_id in selected_client_ids if client_id not in self.cfg.malicious_client_ids]
+            if not observable_updates:
+                observable_updates = [record_by_client[client_id].clean_update for client_id in selected_client_ids]
             if self.cfg.alie_oracle_all_updates:
                 self.logger.warning("ALIE oracle_all_updates reproduction mode is enabled")
             total_samples = sum(record.num_samples for record in clean_records)
@@ -161,7 +163,9 @@ class FederatedCoordinator:
                 "scale_bits": profile_cfg["global_scale_bits"],
                 "coeff_modulus_bits": profile_cfg["coeff_mod_bit_sizes"],
                 "encryption_time": float(sum(upload.metadata["encryption_time"] for upload in uploads)),
-                "attack_type": getattr(self.cfg, "attack_name", self.cfg.attack_type),
+                "attack_name": self.cfg.attack_name,
+                "aggregation_pipeline_residual_mse": metrics.get("aggregate_ckks_mse"),
+                "aggregation_pipeline_residual_max_abs": metrics.get("aggregate_maximum_absolute_error"),
                 **metrics,
                 **dba_metrics,
             }
@@ -171,7 +175,7 @@ class FederatedCoordinator:
                     {
                         "round": round_id,
                         "client_id": upload.client_id,
-                        "attack_type": getattr(self.cfg, "attack_name", self.cfg.attack_type) if upload.metadata["is_malicious"] else "none",
+                        "attack_name": self.cfg.attack_name if upload.metadata["is_malicious"] else "none",
                         "is_malicious": upload.metadata["is_malicious"],
                         "malicious_update_norm_before": upload.metadata["malicious_update_norm_before"],
                         "malicious_update_norm_after": upload.metadata["malicious_update_norm_after"],
