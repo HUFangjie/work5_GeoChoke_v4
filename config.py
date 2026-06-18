@@ -22,10 +22,10 @@ class GeoChokeConfig:
 class ExperimentConfig:
     seed: int = 7
     device: str = "cpu"
-    num_clients: int = 3
+    num_clients: int = 5
     clients_per_round: int = 3
     min_clients_per_round: int = 2
-    malicious_client_ids: List[int] = field(default_factory=lambda: [1])
+    malicious_client_ids: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
     num_rounds: int = 2
     local_epochs: int = 1
     batch_size: int = 32
@@ -35,8 +35,8 @@ class ExperimentConfig:
     dirichlet_alpha: float = 0.5
     crypto_backend_name: str = "ckks"
     defense_name: str = "geochoke"
-    attack_name: str = "alie"  # none, alie, fang_mean
-    attack_type: str = "alie"  # backward-compatible alias
+    attack_name: str = "dba"  # none, alie, fang_mean, dba
+    attack_type: str = "dba"  # backward-compatible alias
     aggregation: str = "weighted_mean"
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"
@@ -57,5 +57,20 @@ class ExperimentConfig:
     alie_oracle_all_updates: bool = False
     fang_max_norm: float = 5.0
     fang_search_steps: int = 6
+
+    dba_target_label: int = 2
+    dba_poison_ratio: float = 0.3125
+    dba_local_epochs: int = 10
+    dba_local_lr: float = 0.05
+    dba_scale_factor: float = 1.0
+    dba_attack_mode: str = "multi_shot"  # multi_shot, single_shot
+    dba_attack_start_round: int = 10
+    dba_attack_end_round: int = 29
+    dba_poison_interval: int = 1
+    dba_num_trigger_parts: int = 4
+    dba_trigger_size: int = 4
+    dba_trigger_gap: int = 2
+    dba_trigger_location: str = "top_left"
+    dba_trigger_value: float = 1.0
 
 CONFIG = ExperimentConfig()

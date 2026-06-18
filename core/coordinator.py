@@ -94,7 +94,7 @@ class FederatedCoordinator:
             malicious_selected = [client_id for client_id in selected_client_ids if client_id in self.cfg.malicious_client_ids]
             self.logger.info("round=%s profile=%s selected=%s", round_id, profile_id, selected_client_ids)
             global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
-            clean_records = [clients[client_id].compute_clean_update(global_state) for client_id in selected_client_ids]
+            clean_records = [clients[client_id].compute_clean_update(global_state, round_id) for client_id in selected_client_ids]
             record_by_client = {record.client_id: record for record in clean_records}
             observable_updates = [record_by_client[client_id].clean_update for client_id in malicious_selected]
             if self.cfg.alie_oracle_all_updates:
@@ -139,6 +139,7 @@ class FederatedCoordinator:
                 plaintext_reference_update=plaintext_reference_update,
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
+            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
             self.logger.info(
                 "round=%s test_accuracy=%.6f test_loss=%.6f",
                 round_id,
@@ -153,6 +154,7 @@ class FederatedCoordinator:
                 "train_loss": float(np.mean([upload.metadata["train_loss"] for upload in uploads])),
                 "test_loss": test_loss,
                 "test_accuracy": test_accuracy,
+                "clean_test_accuracy": test_accuracy,
                 "global_model_norm": model_l2_norm(server.model),
                 "profile_id": profile_id,
                 "poly_modulus_degree": profile_cfg["poly_modulus_degree"],
@@ -161,6 +163,7 @@ class FederatedCoordinator:
                 "encryption_time": float(sum(upload.metadata["encryption_time"] for upload in uploads)),
                 "attack_type": getattr(self.cfg, "attack_name", self.cfg.attack_type),
                 **metrics,
+                **dba_metrics,
             }
             round_rows.append(round_row)
             for upload in uploads:

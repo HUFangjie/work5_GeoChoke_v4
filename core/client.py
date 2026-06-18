@@ -33,7 +33,21 @@ class Client:
         self.malicious = malicious
         self.cfg = cfg
 
-    def compute_clean_update(self, global_state: Dict[str, Any]) -> LocalUpdateRecord:
+    def compute_clean_update(self, global_state: Dict[str, Any], round_id: int | None = None) -> LocalUpdateRecord:
+        if (
+            self.malicious
+            and round_id is not None
+            and hasattr(self.attack_strategy, "should_poison")
+            and self.attack_strategy.should_poison(self.client_id, round_id)
+        ):
+            return self.attack_strategy.train_local_update(
+                self.client_id,
+                self.loader,
+                self.model_factory,
+                self.codec_factory,
+                global_state,
+                round_id,
+            )
         local_model = self.model_factory()
         local_model.load_state_dict(copy.deepcopy(global_state))
         trainer = LocalTrainer(self.cfg.local_epochs, self.cfg.local_lr, self.cfg.device)
@@ -83,6 +97,7 @@ class Client:
             "cosine_before_after": cosine,
             "attack_applied_before_encryption": bool(self.malicious),
             "is_malicious": bool(self.malicious),
+            **clean_record.metadata,
         }
         return ClientUpload(
             client_id=self.client_id,
