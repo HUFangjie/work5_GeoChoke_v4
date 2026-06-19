@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import csv
+import json
 import os
+from dataclasses import asdict, is_dataclass
 from typing import Any
 
 import numpy as np
@@ -50,6 +52,9 @@ class FederatedCoordinator:
 
     def run(self) -> list[dict[str, Any]]:
         os.makedirs(self.cfg.output_dir, exist_ok=True)
+        self._write_effective_config()
+        self._ensure_profile_sweep_placeholder()
+        self._write_trigger_artifacts()
         splits = self.dataset_provider.build()
         _write_csv(os.path.join(self.cfg.output_dir, "client_partitions.csv"), splits.client_metadata)
 
@@ -147,7 +152,8 @@ class FederatedCoordinator:
             self.logger.info(
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
                 "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
-                "attack_active=%s active_malicious_clients=%s poisoned_sample_count=%s effective_poison_ratio=%s current_ckks_profile=%s",
+                "attack_active=%s active_malicious_clients=%s poisoned_sample_count=%s effective_poison_ratio=%s current_ckks_profile=%s "
+                "previous_cfi=%s candidate_cfi=%s fragility_injection_score=%s cfi_nonnegative_check=%s cfi_reference_profile_id=%s perturbation_count=%s perturbation_scale=%s",
                 round_id,
                 test_accuracy,
                 test_loss,
@@ -161,6 +167,13 @@ class FederatedCoordinator:
                 dba_metrics.get("poisoned_sample_count", 0),
                 dba_metrics.get("effective_poison_ratio", 0.0),
                 profile_id,
+                metrics.get("previous_cfi"),
+                metrics.get("candidate_cfi"),
+                metrics.get("fragility_injection_score"),
+                metrics.get("cfi_nonnegative_check"),
+                metrics.get("cfi_reference_profile_id"),
+                metrics.get("perturbation_count"),
+                metrics.get("perturbation_scale"),
             )
             profile_cfg = self.cfg.ckks_profiles[profile_id]
             round_row = {
@@ -214,7 +227,77 @@ class FederatedCoordinator:
             _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "fl_ckks_geochoke_metrics.csv"), round_rows)
         _write_csv(os.path.join(self.cfg.output_dir, "attack_metrics.csv"), attack_rows)
+        self._write_run_summary(round_rows)
         return round_rows
+
+    def _write_effective_config(self) -> None:
+        payload = asdict(self.cfg) if is_dataclass(self.cfg) else dict(vars(self.cfg))
+        with open(os.path.join(self.cfg.output_dir, "effective_config.json"), "w") as handle:
+            json.dump(payload, handle, indent=2, default=str)
+
+    def _ensure_profile_sweep_placeholder(self) -> None:
+        path = os.path.join(self.cfg.output_dir, "profile_sweep_summary.csv")
+        if not os.path.exists(path):
+            with open(path, "w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["profile_id", "final_clean_acc", "peak_global_trigger_asr", "final_global_trigger_asr", "post_attack_asr_auc", "clean_acc_drop_vs_ckks_s40", "residual_l2_ratio_mean", "residual_l2_ratio_max"])
+                writer.writeheader()
+
+    def _write_trigger_artifacts(self) -> None:
+        if self.cfg.attack_name != "dba" or not hasattr(self.attack, "trigger"):
+            return
+        import numpy as np
+        trigger = self.attack.trigger
+        masks = []
+        for trigger_id in range(int(self.cfg.dba_num_trigger_parts)):
+            mask = np.zeros((28, 28), dtype=np.float32)
+            r0, r1, c0, c1 = trigger.region(trigger_id, 28, 28)
+            mask[r0:r1, c0:c1] = 1.0
+            masks.append(mask)
+        local_masks = np.stack(masks, axis=0)
+        global_mask = local_masks.max(axis=0)
+        np.save(os.path.join(self.cfg.output_dir, "local_trigger_masks.npy"), local_masks)
+        np.save(os.path.join(self.cfg.output_dir, "global_trigger_mask.npy"), global_mask)
+        try:
+            from PIL import Image
+            image = (global_mask * 255).astype(np.uint8)
+            Image.fromarray(image, mode="L").save(os.path.join(self.cfg.output_dir, "trigger_visualization.png"))
+        except Exception:
+            with open(os.path.join(self.cfg.output_dir, "trigger_visualization.png"), "wb") as handle:
+                handle.write(b"")
+
+    def _write_run_summary(self, rows: list[dict[str, Any]]) -> None:
+        if not rows:
+            return
+        attack_end = int(getattr(self.cfg, "dba_attack_end_round", -1))
+        final = rows[-1]
+        global_asrs = [float(row.get("global_trigger_asr", 0.0) or 0.0) for row in rows]
+        post_rows = [row for row in rows if int(row.get("round", 0)) > attack_end]
+        post_asrs = [float(row.get("global_trigger_asr", 0.0) or 0.0) for row in post_rows]
+        clean_accs = [float(row.get("clean_test_accuracy", row.get("test_accuracy", 0.0)) or 0.0) for row in rows]
+        selected_profiles = [row.get("selected_next_profile_id") or row.get("selected_next_profile") or row.get("profile_id") for row in rows]
+        distribution = {profile: selected_profiles.count(profile) for profile in sorted(set(selected_profiles))}
+        residual_ratios = [float(row["ckks_residual_l2_ratio"]) for row in rows if row.get("ckks_residual_l2_ratio") is not None]
+        peak = max(global_asrs) if global_asrs else 0.0
+        recovery_rounds = None
+        for row in post_rows:
+            if float(row.get("global_trigger_asr", 0.0) or 0.0) <= 0.1 * max(peak, 1e-12):
+                recovery_rounds = int(row["round"]) - attack_end
+                break
+        summary = {
+            "final_clean_accuracy": float(final.get("clean_test_accuracy", final.get("test_accuracy", 0.0)) or 0.0),
+            "peak_global_trigger_asr": peak,
+            "final_global_trigger_asr": float(final.get("global_trigger_asr", 0.0) or 0.0),
+            "post_attack_asr_auc": float(sum(post_asrs)),
+            "recovery_rounds": recovery_rounds,
+            "clean_acc_drop": float(max(clean_accs) - clean_accs[-1]) if clean_accs else 0.0,
+            "selected_profile_distribution": distribution,
+            "mean_ckks_residual_l2_ratio": float(np.mean(residual_ratios)) if residual_ratios else None,
+            "max_ckks_residual_l2_ratio": float(np.max(residual_ratios)) if residual_ratios else None,
+            "cfi_negative_count": int(sum(1 for row in rows if (row.get("previous_cfi") is not None and float(row.get("previous_cfi")) < 0) or (row.get("candidate_cfi") is not None and float(row.get("candidate_cfi")) < 0))),
+            "profile_range_warning": bool(any(row.get("profile_range_warning", False) for row in rows)),
+        }
+        with open(os.path.join(self.cfg.output_dir, "run_summary.json"), "w") as handle:
+            json.dump(summary, handle, indent=2)
 
     def _validate_crypto_pipeline(self, dimension: int, output_dir: str) -> None:
         validator = AggregationPipelineValidator(

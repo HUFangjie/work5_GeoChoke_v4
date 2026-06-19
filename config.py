@@ -1,22 +1,30 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Any
 
 CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
-    "high_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 40},
-    "medium_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 35, 35, 60], "global_scale_bits": 35},
-    "low_precision": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 30, 30, 60], "global_scale_bits": 30},
+    "ckks_s40": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 40, 40, 60], "global_scale_bits": 40},
+    "ckks_s38": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 38, 38, 60], "global_scale_bits": 38},
+    "ckks_s36": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 36, 36, 60], "global_scale_bits": 36},
+    "ckks_s34": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 34, 34, 60], "global_scale_bits": 34},
+    "ckks_s32": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 32, 32, 60], "global_scale_bits": 32},
+    "ckks_s30": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 30, 30, 60], "global_scale_bits": 30},
+    "ckks_s28": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 28, 28, 60], "global_scale_bits": 28},
+    "ckks_s26": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 26, 26, 60], "global_scale_bits": 26},
+    "ckks_s24": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 24, 24, 60], "global_scale_bits": 24},
+    "ckks_s22": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 22, 22, 60], "global_scale_bits": 22},
+    "ckks_s20": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 20, 20, 60], "global_scale_bits": 20},
 }
 
 @dataclass
 class GeoChokeConfig:
-    initial_profile_id: str = "high_precision"
-    reference_profile_id: str = "high_precision"
-    calibration_vectors: int = 8
-    perturbation_count: int = 8
+    initial_profile_id: str = "ckks_s40"
+    reference_profile_id: str = "ckks_s28"
+    calibration_vectors: int = 16
+    perturbation_count: int = 16
     perturbation_scale: float = 1.0
-    lambda_: float = 1.0
-    gamma: float = 1.0
-    rho: float = 1.0
+    lambda_: float = 50.0
+    gamma: float = 0.01
+    rho: float = 0.01
 
 @dataclass
 class ExperimentConfig:
@@ -49,7 +57,7 @@ class ExperimentConfig:
     geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
     output_dir: str = "./outputs"
     log_level: str = "INFO"
-    enable_plaintext_reference_metrics: bool = False
+    enable_plaintext_reference_metrics: bool = True
     pipeline_validation_rtol: float = 5e-2
     pipeline_validation_atol: float = 5e-2
     pipeline_validation_norm_ratio_tolerance: float = 5e-2
@@ -67,7 +75,7 @@ class ExperimentConfig:
     dba_single_shot_scale_factor: float = 20.0
     dba_attack_mode: str = "multi_shot"  # multi_shot, single_shot
     dba_attack_start_round: int = 10
-    dba_attack_end_round: int = 29
+    dba_attack_end_round: int = 19
     dba_poison_interval: int = 1
     dba_num_trigger_parts: int = 4
     dba_trigger_size: int = 4
@@ -75,4 +83,23 @@ class ExperimentConfig:
     dba_trigger_location: str = "top_left"
     dba_trigger_value: float = 1.0
 
-CONFIG = ExperimentConfig()
+
+def strong_geochoke_config() -> ExperimentConfig:
+    return ExperimentConfig()
+
+
+def mild_geochoke_config() -> ExperimentConfig:
+    return ExperimentConfig(
+        geochoke=GeoChokeConfig(
+            initial_profile_id="ckks_s40",
+            reference_profile_id="ckks_s30",
+            calibration_vectors=8,
+            perturbation_count=8,
+            perturbation_scale=1.0,
+            lambda_=1.0,
+            gamma=1.0,
+            rho=1.0,
+        )
+    )
+
+CONFIG = strong_geochoke_config()

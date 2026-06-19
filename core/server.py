@@ -88,10 +88,16 @@ class AggregationServer:
         self.model.load_state_dict(candidate_state)
         reference_mse = None
         reference_max_error = None
+        plaintext_norm = None
+        residual_l2_norm = None
+        residual_l2_ratio = None
         if plaintext_reference_update is not None:
             if plaintext_reference_update.shape != decrypted_update.shape:
                 raise ValueError("plaintext reference update dimension mismatch")
             difference = decrypted_update - plaintext_reference_update
+            plaintext_norm = float(np.linalg.norm(plaintext_reference_update))
+            residual_l2_norm = float(np.linalg.norm(difference))
+            residual_l2_ratio = residual_l2_norm / max(plaintext_norm, 1e-12)
             reference_mse = float(np.mean(difference * difference))
             reference_max_error = float(np.max(np.abs(difference)))
         serialized = self.crypto_backend.serialize(aggregate_ciphertext)
@@ -101,6 +107,11 @@ class AggregationServer:
             "ciphertext_block_count": aggregate_ciphertext.block_count,
             "serialized_ciphertext_bytes": sum(len(chunk["payload"]) for chunk in serialized["chunks"]),
             "aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
+            "plaintext_aggregate_update_norm": plaintext_norm,
+            "decrypted_aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
+            "ckks_residual_l2_norm": residual_l2_norm,
+            "ckks_residual_l2_ratio": residual_l2_ratio,
+            "ckks_residual_max_abs": reference_max_error,
             "aggregate_ckks_mse": reference_mse,
             "aggregate_maximum_absolute_error": reference_max_error,
             **geo_metrics,

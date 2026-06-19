@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
 from crypto.update_codec import ModelUpdateCodec
@@ -27,13 +28,17 @@ class GeoChokeDefense(DefenseStrategy):
         self.codec = ModelUpdateCodec(model)
         provider = CalibrationTensorProvider(self.codec, self.cfg, self.device)
         representative_tensors = provider.build(model, proxy_loader)
-        self.calibration, self.perturbation_bank = ProfileCalibrator(
+        calibrator = ProfileCalibrator(
             crypto_backend,
             decrypt_aggregate_fn,
             self.profiles,
             self.cfg,
             output_dir=self.output_dir,
-        ).calibrate(representative_tensors)
+        )
+        self.calibration, self.perturbation_bank = calibrator.calibrate(representative_tensors)
+        self.profile_range_warning = calibrator.profile_range_warning
+        if self.profile_range_warning:
+            logging.getLogger("geochoke").warning("GeoChoke profile range may be too weak to suppress DBA or adjacent calibrated MSE values are nearly identical.")
         self.estimator = CFIEstimator(self.codec, proxy_loader, self.perturbation_bank, self.device)
         self.controller = GeoChokeController(self.cfg, self.calibration)
 
@@ -47,6 +52,8 @@ class GeoChokeDefense(DefenseStrategy):
             previous_cfi = self.estimator.estimate(previous_model)
             previous_cfi_source = "estimated_initial_previous_model_cfi"
         candidate_cfi = self.estimator.estimate(candidate_model)
+        if previous_cfi < -1e-12 or candidate_cfi < -1e-12:
+            raise ValueError(f"GeoChoke CFI became negative: previous={previous_cfi}, candidate={candidate_cfi}")
         next_profile, metrics = self.controller.select(previous_cfi, candidate_cfi, current_profile_id)
         self._previous_cfi_cache = candidate_cfi
         self.next_profile = next_profile
@@ -55,8 +62,12 @@ class GeoChokeDefense(DefenseStrategy):
                 "previous_cfi_source": previous_cfi_source,
                 "cached_previous_cfi_for_next_round": float(candidate_cfi),
                 "reference_profile_id": self.cfg.reference_profile_id,
+                "cfi_reference_profile_id": self.cfg.reference_profile_id,
+                "perturbation_count": int(self.cfg.perturbation_count),
+                "perturbation_scale": float(self.cfg.perturbation_scale),
                 "profile_calibration_residual_mse": float(self.calibration[current_profile_id]["mse"]),
                 "reference_residual_mse": float(self.calibration[self.cfg.reference_profile_id]["mse"]),
+                "profile_range_warning": bool(getattr(self, "profile_range_warning", False)),
             }
         )
         self.history.append({"round": round_id, "current_profile": current_profile_id, **metrics})
