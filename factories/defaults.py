@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from attacks.alie import ALIEAttack
 from attacks.fang import FangMeanAttack
+from attacks.dba import DBAAttack
 from attacks.no_attack import NoAttack
 from core.decryption_service import AuthorizedDecryptionService
 from crypto.ckks_backend import CKKSBackend
@@ -9,7 +10,7 @@ from crypto.ckks_context_manager import CKKSContextManager
 from data.mnist import MNISTProvider
 from defenses.geochoke.defense import GeoChokeDefense
 from defenses.no_defense import NoDefense
-from factories.attack_factory import ATTACK_REGISTRY
+from factories.registries import ATTACK_REGISTRY
 from factories.crypto_factory import CRYPTO_REGISTRY, CryptoBundle
 from factories.dataset_factory import DATASET_REGISTRY
 from factories.defense_factory import DEFENSE_REGISTRY
@@ -31,6 +32,7 @@ def register_defaults() -> None:
     ATTACK_REGISTRY.setdefault("none", _create_no_attack)
     ATTACK_REGISTRY.setdefault("alie", _create_alie)
     ATTACK_REGISTRY.setdefault("fang_mean", _create_fang_mean)
+    ATTACK_REGISTRY.setdefault("dba", _create_dba)
     CRYPTO_REGISTRY.setdefault("ckks", _create_ckks)
     DEFENSE_REGISTRY.setdefault("geochoke", _create_geochoke)
     DEFENSE_REGISTRY.setdefault("none", _create_no_defense)
@@ -51,6 +53,10 @@ def _create_alie(cfg):
 
 def _create_fang_mean(cfg):
     return FangMeanAttack(cfg.aggregation, cfg.fang_max_norm, cfg.fang_search_steps)
+
+
+def _create_dba(cfg):
+    return DBAAttack(cfg)
 
 
 def _create_ckks(cfg):

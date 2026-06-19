@@ -38,25 +38,31 @@ class CKKSContextManager:
     def __init__(self, profiles: Mapping[str, Dict[str, Any]]) -> None:
         self._profiles = dict(profiles)
         self._secret_bundles: Dict[str, SecretCKKSContextBundle] = {}
+        self.skipped_profiles: Dict[str, str] = {}
 
     def initialize(self) -> None:
         for profile_id, cfg in self._profiles.items():
-            self._validate_profile(profile_id, cfg)
-            context = ts.context(
-                ts.SCHEME_TYPE.CKKS,
-                poly_modulus_degree=cfg["poly_modulus_degree"],
-                coeff_mod_bit_sizes=cfg["coeff_mod_bit_sizes"],
-            )
-            context.global_scale = 2 ** int(cfg["global_scale_bits"])
-            context.generate_galois_keys()
-            public_context = ts.context_from(context.serialize(save_secret_key=False))
-            self._secret_bundles[profile_id] = SecretCKKSContextBundle(
-                profile_id=profile_id,
-                secret_context=context,
-                public_context=public_context,
-                slot_count=int(cfg["poly_modulus_degree"]) // 2,
-                parameters=dict(cfg),
-            )
+            try:
+                self._validate_profile(profile_id, cfg)
+                context = ts.context(
+                    ts.SCHEME_TYPE.CKKS,
+                    poly_modulus_degree=cfg["poly_modulus_degree"],
+                    coeff_mod_bit_sizes=cfg["coeff_mod_bit_sizes"],
+                )
+                context.global_scale = 2 ** int(cfg["global_scale_bits"])
+                context.generate_galois_keys()
+                public_context = ts.context_from(context.serialize(save_secret_key=False))
+                self._secret_bundles[profile_id] = SecretCKKSContextBundle(
+                    profile_id=profile_id,
+                    secret_context=context,
+                    public_context=public_context,
+                    slot_count=int(cfg["poly_modulus_degree"]) // 2,
+                    parameters=dict(cfg),
+                )
+            except Exception as exc:
+                self.skipped_profiles[profile_id] = str(exc)
+        if not self._secret_bundles:
+            raise ValueError(f"No valid CKKS profiles were initialized; skipped={self.skipped_profiles}")
 
     def public_bundles(self) -> Dict[str, PublicCKKSContextBundle]:
         return {
