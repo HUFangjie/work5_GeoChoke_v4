@@ -25,6 +25,14 @@ class GeoChokeConfig:
     lambda_: float = 50.0
     gamma: float = 0.01
     rho: float = 0.01
+    tangent_commitment_enabled: bool = True
+    tangent_basis_rank: int = 16
+    tangent_max_proxy_batches: int = 16
+    tangent_tau_max: float = 0.20
+    tangent_tau_min: float = 0.02
+    tangent_lambda: float = 10.0
+    tangent_eps: float = 1e-12
+    tangent_refresh_interval: int = 1
 
 @dataclass
 class ExperimentConfig:

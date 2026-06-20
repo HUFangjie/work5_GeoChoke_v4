@@ -85,7 +85,35 @@ class AggregationServer:
         candidate_model = self.model_factory()
         candidate_model.load_state_dict(candidate_state)
         geo_metrics = self.defense.after_aggregate(self.model, candidate_model, profile_id, round_id)
-        self.model.load_state_dict(candidate_state)
+        default_tau = float(getattr(self.cfg.geochoke, "tangent_tau_max", 1.0))
+        if hasattr(self.defense, "commit_update"):
+            committed_update, tangent_metrics = self.defense.commit_update(
+                decrypted_update,
+                self.model,
+                round_id,
+                geo_metrics.get("tangent_tau", default_tau),
+            )
+        else:
+            committed_update = decrypted_update
+            original_norm = float(np.linalg.norm(decrypted_update))
+            tangent_metrics = {
+                "tangent_commitment_enabled": False,
+                "tangent_basis_rank_actual": 0,
+                "tangent_tau": geo_metrics.get("tangent_tau", default_tau),
+                "tangent_rho": 1.0,
+                "tangent_parallel_norm": original_norm,
+                "tangent_perp_norm": 0.0,
+                "tangent_null_ratio": 0.0,
+                "tangent_original_update_norm": original_norm,
+                "tangent_committed_update_norm": original_norm,
+                "tangent_update_shrink_ratio": 1.0,
+            }
+        final_state = self.codec.apply_update_to_state_dict(
+            previous_state,
+            committed_update,
+            step_size=self.cfg.server_lr,
+        )
+        self.model.load_state_dict(final_state)
         reference_mse = None
         reference_max_error = None
         plaintext_norm = None
@@ -107,6 +135,7 @@ class AggregationServer:
             "ciphertext_block_count": aggregate_ciphertext.block_count,
             "serialized_ciphertext_bytes": sum(len(chunk["payload"]) for chunk in serialized["chunks"]),
             "aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
+            "committed_aggregate_update_norm": float(np.linalg.norm(committed_update)),
             "plaintext_aggregate_update_norm": plaintext_norm,
             "decrypted_aggregate_update_norm": float(np.linalg.norm(decrypted_update)),
             "ckks_residual_l2_norm": residual_l2_norm,
@@ -115,4 +144,5 @@ class AggregationServer:
             "aggregate_ckks_mse": reference_mse,
             "aggregate_maximum_absolute_error": reference_max_error,
             **geo_metrics,
+            **tangent_metrics,
         }

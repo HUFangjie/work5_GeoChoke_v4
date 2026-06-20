@@ -153,7 +153,7 @@ class FederatedCoordinator:
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
                 "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
                 "attack_active=%s active_malicious_clients=%s poisoned_sample_count=%s effective_poison_ratio=%s current_ckks_profile=%s "
-                "previous_cfi=%s candidate_cfi=%s fragility_injection_score=%s cfi_nonnegative_check=%s cfi_reference_profile_id=%s perturbation_count=%s perturbation_scale=%s",
+                "previous_cfi=%s candidate_cfi=%s fragility_injection_score=%s cfi_nonnegative_check=%s cfi_reference_profile_id=%s perturbation_count=%s perturbation_scale=%s tangent_tau=%s tangent_rho=%s tangent_null_ratio=%s tangent_update_shrink_ratio=%s",
                 round_id,
                 test_accuracy,
                 test_loss,
@@ -174,6 +174,10 @@ class FederatedCoordinator:
                 metrics.get("cfi_reference_profile_id"),
                 metrics.get("perturbation_count"),
                 metrics.get("perturbation_scale"),
+                metrics.get("tangent_tau"),
+                metrics.get("tangent_rho"),
+                metrics.get("tangent_null_ratio"),
+                metrics.get("tangent_update_shrink_ratio"),
             )
             profile_cfg = self.cfg.ckks_profiles[profile_id]
             round_row = {
