@@ -15,6 +15,7 @@ CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
     "ckks_s20": {"poly_modulus_degree": 8192, "coeff_mod_bit_sizes": [60, 20, 20, 60], "global_scale_bits": 20},
 }
 
+
 @dataclass
 class GeoChokeConfig:
     initial_profile_id: str = "ckks_s40"
@@ -25,36 +26,48 @@ class GeoChokeConfig:
     lambda_: float = 50.0
     gamma: float = 0.01
     rho: float = 0.01
+
     tangent_commitment_enabled: bool = True
-    tangent_basis_rank: int = 16
-    tangent_max_proxy_batches: int = 16
-    tangent_tau_max: float = 0.20
+    tangent_basis_rank: int = 128
+    tangent_max_proxy_batches: int = 64
+    tangent_tau_max: float = 0.30
     tangent_tau_min: float = 0.02
     tangent_lambda: float = 10.0
     tangent_eps: float = 1e-12
     tangent_refresh_interval: int = 1
 
+
 @dataclass
 class AionConfig:
     profile_id: str = "ckks_s40"
+
+    # Multi-aggregator secure aggregation parameters
     aggregator_count: int = 8
     malicious_aggregator_count: int = 0
-    reconstruction_mode: str = "amr"
+    reconstruction_mode: str = "amr"  # amr, asr
     field_modulus_bits: int = 2048
     vss_threshold: int | None = None
+
+    # HPRF / mask parameters
     hprf_key_dim: int = 16
     mask_ratio_beta: float = 0.2
     hprf_hmax: float = 1.0
     decimal_places: int = 8
-    bound_init_mode: str = "warmup_quantile"
+
+    # MGF bound initialization
+    bound_init_mode: str = "warmup_quantile"  # warmup_quantile, fixed_from_clean_rounds
     warmup_rounds_for_bound: int = 2
     initial_bound_multiplier: float = 1.00
     initial_bound_quantile: float = 0.80
+
+    # Paper evolving bound
     use_paper_evolving_bound: bool = True
     mu_min: float = 0.50
     mu_max: float = 1.20
     bound_min: float = 1e-12
     bound_max: float | None = None
+
+    # Protocol switches
     enable_mgf: bool = True
     enable_dmc_dmr: bool = True
     fail_safe_keep_one: bool = False
@@ -64,47 +77,65 @@ class AionConfig:
     allow_weighted_mean: bool = False
     strict_protocol_checks: bool = True
 
+
 @dataclass
 class ExperimentConfig:
-    seed: int = 7
-    device: str = "cpu"
-    num_clients: int = 5
-    clients_per_round: int = 5
+    seed: int = 42
+    device: str = "cuda"
+
+    # Federated learning setting
+    num_clients: int = 20
+    clients_per_round: int = 20
     min_clients_per_round: int = 2
     malicious_client_ids: List[int] = field(default_factory=lambda: [1, 2, 3, 4])
-    num_rounds: int = 50
+    num_rounds: int = 30
     local_epochs: int = 1
     batch_size: int = 32
     local_lr: float = 0.01
     server_lr: float = 1.0
     partition_type: str = "iid"
     dirichlet_alpha: float = 0.5
+
+    # Crypto / defense / attack setting
     crypto_backend_name: str = "ckks"
-    defense_name: str = "geochoke"
+    defense_name: str = "geochoke"  # none, geochoke, aion
     attack_name: str = "dba"  # none, alie, fang_mean, dba
-    aggregation: str = "weighted_mean"
+    aggregation: str = "weighted_mean"  # weighted_mean, mean
+
+    # Model / dataset setting
     model_name: str = "mnist_cnn"
     dataset_name: str = "mnist"
     num_classes: int = 10
     data_dir: str = "./data_cache"
     download_data: bool = True
-    quick_data_limit: int = 600
-    proxy_size: int = 64
-    test_size: int = 256
+    quick_data_limit: int = 59000
+    proxy_size: int = 1000
+    test_size: int = 10000
+
+    # Defense configs
     ckks_profiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: CKKS_PROFILES)
     geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
     aion: AionConfig = field(default_factory=AionConfig)
+
+    # Output / logging
     output_dir: str = "./outputs"
     log_level: str = "INFO"
+
+    # Pipeline validation
     enable_plaintext_reference_metrics: bool = True
     pipeline_validation_rtol: float = 5e-2
     pipeline_validation_atol: float = 5e-2
     pipeline_validation_norm_ratio_tolerance: float = 5e-2
+
+    # ALIE attack parameters
     alie_z: float | None = None
     alie_oracle_all_updates: bool = False
+
+    # Fang attack parameters
     fang_max_norm: float = 5.0
     fang_search_steps: int = 6
 
+    # DBA attack parameters
     dba_target_label: int = 2
     dba_poison_ratio: float = 0.3125
     dba_local_epochs: int = 10
@@ -113,8 +144,8 @@ class ExperimentConfig:
     dba_multi_shot_scale_factor: float = 1.0
     dba_single_shot_scale_factor: float = 20.0
     dba_attack_mode: str = "multi_shot"  # multi_shot, single_shot
-    dba_attack_start_round: int = 10
-    dba_attack_end_round: int = 19
+    dba_attack_start_round: int = 5
+    dba_attack_end_round: int = 15
     dba_poison_interval: int = 1
     dba_num_trigger_parts: int = 4
     dba_trigger_size: int = 4
@@ -128,7 +159,40 @@ def strong_geochoke_config() -> ExperimentConfig:
 
 
 def aion_config() -> ExperimentConfig:
-    return ExperimentConfig(defense_name="aion", attack_name="dba", aggregation="mean")
+    return ExperimentConfig(
+        defense_name="aion",
+        attack_name="dba",
+        aggregation="mean",
+        aion=AionConfig(
+            profile_id="ckks_s40",
+            aggregator_count=8,
+            malicious_aggregator_count=0,
+            reconstruction_mode="amr",
+            field_modulus_bits=2048,
+            vss_threshold=None,
+            hprf_key_dim=16,
+            mask_ratio_beta=0.2,
+            hprf_hmax=1.0,
+            decimal_places=8,
+            bound_init_mode="warmup_quantile",
+            warmup_rounds_for_bound=2,
+            initial_bound_multiplier=1.00,
+            initial_bound_quantile=0.80,
+            use_paper_evolving_bound=True,
+            mu_min=0.50,
+            mu_max=1.20,
+            bound_min=1e-12,
+            bound_max=None,
+            enable_mgf=True,
+            enable_dmc_dmr=True,
+            fail_safe_keep_one=False,
+            fail_open_when_too_few_valid=False,
+            log_client_filter_details=True,
+            enable_vss_verification=True,
+            allow_weighted_mean=False,
+            strict_protocol_checks=True,
+        ),
+    )
 
 
 def mild_geochoke_config() -> ExperimentConfig:
@@ -142,7 +206,17 @@ def mild_geochoke_config() -> ExperimentConfig:
             lambda_=1.0,
             gamma=1.0,
             rho=1.0,
+            tangent_commitment_enabled=True,
+            tangent_basis_rank=64,
+            tangent_max_proxy_batches=64,
+            tangent_tau_max=0.5,
+            tangent_tau_min=0.02,
+            tangent_lambda=10.0,
+            tangent_eps=1e-12,
+            tangent_refresh_interval=1,
         )
     )
 
-CONFIG = strong_geochoke_config()
+
+# CONFIG = strong_geochoke_config()
+CONFIG = aion_config()

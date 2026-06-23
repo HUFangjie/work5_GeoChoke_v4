@@ -37,10 +37,20 @@ class MaskedGradientFilter:
             return MGFResult(uploads, self._metrics(uploads, [], np.array([], dtype=np.float64), 0.0, 0.0, 1.0, 1.0, 0.0, 0.0))
         vectors = [self.masked_vector(upload) for upload in uploads]
         norms = np.asarray([float(np.linalg.norm(vector)) for vector in vectors], dtype=np.float64)
+        finite_mask = np.isfinite(norms)
+        finite_norms = norms[finite_mask]
+        if finite_norms.size == 0:
+            if self.cfg.fail_open_when_too_few_valid:
+                return MGFResult(list(uploads), self._metrics(uploads, [], norms, float("inf"), self.previous_bound, 1.0, 1.0, 0.0, 0.0))
+            raise ValueError("Aion MGF received no finite masked update norms")
         previous_bound = float(self.previous_bound) if self.previous_bound is not None else None
-        bound, mu_raw, mu_clipped, numerator, denominator = self._compute_bound(norms, round_id)
-        valid = [upload for upload, norm in zip(uploads, norms) if norm <= bound]
-        filtered = [upload for upload, norm in zip(uploads, norms) if norm > bound]
+        bound, mu_raw, mu_clipped, numerator, denominator = self._compute_bound(finite_norms, round_id)
+        if self.previous_bound is None or round_id < int(self.cfg.warmup_rounds_for_bound):
+            kth = min(max(int(min_clients_per_round), 1), finite_norms.size) - 1
+            min_required_bound = float(np.partition(finite_norms, kth)[kth])
+            bound = max(bound, min_required_bound)
+        valid = [upload for upload, norm in zip(uploads, norms) if np.isfinite(norm) and norm <= bound]
+        filtered = [upload for upload, norm in zip(uploads, norms) if (not np.isfinite(norm)) or norm > bound]
         if not valid and uploads and self.cfg.fail_safe_keep_one:
             best_idx = int(np.argmin(norms))
             valid = [uploads[best_idx]]
