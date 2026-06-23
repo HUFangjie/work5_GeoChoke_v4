@@ -55,15 +55,27 @@ class MaskedGradientFilter:
             best_idx = int(np.argmin(norms))
             valid = [uploads[best_idx]]
             filtered = [upload for idx, upload in enumerate(uploads) if idx != best_idx]
-        if len(valid) < int(min_clients_per_round):
-            if self.cfg.fail_open_when_too_few_valid:
+        min_required = int(min_clients_per_round)
+        promoted_count = 0
+        if len(valid) < min_required:
+            finite_indices = [idx for idx, norm in enumerate(norms) if np.isfinite(norm)]
+            if len(finite_indices) >= min_required:
+                ordered = sorted(finite_indices, key=lambda idx: norms[idx])[:min_required]
+                keep = set(ordered)
+                valid = [upload for idx, upload in enumerate(uploads) if idx in keep]
+                filtered = [upload for idx, upload in enumerate(uploads) if idx not in keep]
+                promoted_count = max(0, min_required - len([upload for upload, norm in zip(uploads, norms) if np.isfinite(norm) and norm <= bound]))
+                bound = max(bound, float(max(norms[idx] for idx in ordered)))
+            elif self.cfg.fail_open_when_too_few_valid:
                 valid = list(uploads)
                 filtered = []
             else:
                 raise ValueError(f"Aion MGF valid client count {len(valid)} < min_clients_per_round {min_clients_per_round}")
         filtered_ids = [upload.client_id for upload in filtered]
         self.previous_bound = bound
-        return MGFResult(valid, self._metrics(uploads, filtered_ids, norms, bound, previous_bound, mu_raw, mu_clipped, numerator, denominator))
+        metrics = self._metrics(uploads, filtered_ids, norms, bound, previous_bound, mu_raw, mu_clipped, numerator, denominator)
+        metrics["aion_min_valid_promoted_count"] = int(promoted_count)
+        return MGFResult(valid, metrics)
 
     def note_round_result(self, global_l2_norm: float, alpha: float, aggregated_mask_linf: float) -> None:
         self.history.append({
