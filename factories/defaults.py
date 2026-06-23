@@ -8,6 +8,7 @@ from core.decryption_service import AuthorizedDecryptionService
 from crypto.ckks_backend import CKKSBackend
 from crypto.ckks_context_manager import CKKSContextManager
 from data.mnist import MNISTProvider
+from defenses.aion.defense import AionDefense
 from defenses.geochoke.defense import GeoChokeDefense
 from defenses.no_defense import NoDefense
 from factories.registries import ATTACK_REGISTRY
@@ -35,6 +36,7 @@ def register_defaults() -> None:
     ATTACK_REGISTRY.setdefault("dba", _create_dba)
     CRYPTO_REGISTRY.setdefault("ckks", _create_ckks)
     DEFENSE_REGISTRY.setdefault("geochoke", _create_geochoke)
+    DEFENSE_REGISTRY.setdefault("aion", _create_aion)
     DEFENSE_REGISTRY.setdefault("none", _create_no_defense)
     DEFENSE_REGISTRY.setdefault("no_defense", _create_no_defense)
 
@@ -70,6 +72,10 @@ def _create_ckks(cfg):
 
 def _create_geochoke(cfg):
     return GeoChokeDefense(cfg.geochoke, cfg.ckks_profiles, device=cfg.device, output_dir=f"{cfg.output_dir}/crypto_calibration")
+
+
+def _create_aion(cfg):
+    return AionDefense(cfg.aion, cfg.ckks_profiles, device=cfg.device, output_dir=f"{cfg.output_dir}/aion")
 
 
 def _create_no_defense(cfg):

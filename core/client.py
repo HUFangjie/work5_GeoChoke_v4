@@ -23,6 +23,7 @@ class Client:
         attack_strategy: Any,
         malicious: bool,
         cfg: Any,
+        defense_strategy: Any | None = None,
     ) -> None:
         self.client_id = client_id
         self.loader = loader
@@ -32,6 +33,7 @@ class Client:
         self.attack_strategy = attack_strategy
         self.malicious = malicious
         self.cfg = cfg
+        self.defense_strategy = defense_strategy
 
     def compute_local_update(self, global_state: Dict[str, Any], round_id: int | None = None) -> LocalUpdateRecord:
         if (
@@ -74,6 +76,7 @@ class Client:
         update_record: LocalUpdateRecord,
         profile_id: str,
         attacker_context: Dict[str, Any],
+        round_id: int | None = None,
     ) -> ClientUpload:
         before = update_record.local_update.copy()
         start_time = time.perf_counter()
@@ -89,7 +92,21 @@ class Client:
         attack_time = time.perf_counter() - start_time
         if not np.all(np.isfinite(final_update)):
             raise ValueError(f"client {self.client_id} produced a non-finite update")
-        encrypted = self.crypto_backend.encrypt_update(final_update, profile_id)
+        defense_metadata = {}
+        prepared_update = final_update
+        if self.defense_strategy is not None and hasattr(self.defense_strategy, "prepare_client_upload"):
+            prepared_update, defense_metadata = self.defense_strategy.prepare_client_upload(
+                client_id=self.client_id,
+                update_vector=final_update,
+                round_id=int(round_id or 0),
+                profile_id=profile_id,
+                num_samples=update_record.num_samples,
+                metadata={**update_record.metadata, "num_selected": attacker_context.get("num_selected")},
+            )
+        protocol_payload = {}
+        if isinstance(defense_metadata, dict) and "aion_protocol_payload" in defense_metadata:
+            protocol_payload = defense_metadata.pop("aion_protocol_payload")
+        encrypted = self.crypto_backend.encrypt_update(prepared_update, profile_id)
         encryption_time = self.crypto_backend.last_encryption_time
         before_norm = float(np.linalg.norm(before))
         after_norm = float(np.linalg.norm(final_update))
@@ -113,6 +130,7 @@ class Client:
             "is_malicious": bool(self.malicious),
             **update_record.metadata,
             **dba_extra,
+            **defense_metadata,
         }
         return ClientUpload(
             client_id=self.client_id,
@@ -120,4 +138,5 @@ class Client:
             profile_id=profile_id,
             encrypted_update=encrypted,
             metadata=metadata,
+            protocol_payload=protocol_payload,
         )

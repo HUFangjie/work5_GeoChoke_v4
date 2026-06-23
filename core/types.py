@@ -29,3 +29,4 @@ class ClientUpload:
     profile_id: str
     encrypted_update: EncryptedUpdate
     metadata: Dict[str, Any] = field(default_factory=dict)
+    protocol_payload: Dict[str, Any] = field(default_factory=dict)

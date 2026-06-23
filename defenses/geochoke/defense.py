@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+
+import numpy as np
 from typing import Any, Mapping
 
 from crypto.update_codec import ModelUpdateCodec
@@ -9,6 +11,7 @@ from defenses.geochoke.calibration import ProfileCalibrator
 from defenses.geochoke.calibration_provider import CalibrationTensorProvider
 from defenses.geochoke.cfi_estimator import CFIEstimator
 from defenses.geochoke.controller import GeoChokeController
+from defenses.geochoke.tangent_commitment import TangentCommitter
 
 
 class GeoChokeDefense(DefenseStrategy):
@@ -26,6 +29,8 @@ class GeoChokeDefense(DefenseStrategy):
         if decrypt_aggregate_fn is None:
             raise ValueError("GeoChoke calibration requires aggregate-only decryption callable")
         self.codec = ModelUpdateCodec(model)
+        self.proxy_loader = proxy_loader
+        self.tangent_committer = TangentCommitter(self.codec, proxy_loader, self.cfg, self.device)
         provider = CalibrationTensorProvider(self.codec, self.cfg, self.device)
         representative_tensors = provider.build(model, proxy_loader)
         calibrator = ProfileCalibrator(
@@ -55,6 +60,12 @@ class GeoChokeDefense(DefenseStrategy):
         if previous_cfi < -1e-12 or candidate_cfi < -1e-12:
             raise ValueError(f"GeoChoke CFI became negative: previous={previous_cfi}, candidate={candidate_cfi}")
         next_profile, metrics = self.controller.select(previous_cfi, candidate_cfi, current_profile_id)
+        fragility_injection_score = float(metrics.get("fragility_injection_score", max(0.0, candidate_cfi - previous_cfi)))
+        if self.cfg.tangent_commitment_enabled:
+            tau_raw = self.cfg.tangent_tau_max / (1.0 + self.cfg.tangent_lambda * fragility_injection_score)
+            tangent_tau = max(self.cfg.tangent_tau_min, min(self.cfg.tangent_tau_max, tau_raw))
+        else:
+            tangent_tau = self.cfg.tangent_tau_max
         self._previous_cfi_cache = candidate_cfi
         self.next_profile = next_profile
         metrics.update(
@@ -68,17 +79,40 @@ class GeoChokeDefense(DefenseStrategy):
                 "profile_calibration_residual_mse": float(self.calibration[current_profile_id]["mse"]),
                 "reference_residual_mse": float(self.calibration[self.cfg.reference_profile_id]["mse"]),
                 "profile_range_warning": bool(getattr(self, "profile_range_warning", False)),
+                "tangent_commitment_enabled": bool(self.cfg.tangent_commitment_enabled),
+                "tangent_tau": float(tangent_tau),
+                "tangent_tau_min": float(self.cfg.tangent_tau_min),
+                "tangent_tau_max": float(self.cfg.tangent_tau_max),
+                "tangent_lambda": float(self.cfg.tangent_lambda),
             }
         )
         self.history.append({"round": round_id, "current_profile": current_profile_id, **metrics})
         return metrics
+
+    def commit_update(self, update_vector: Any, previous_model: Any, round_id: int, tangent_tau: float):
+        original_norm = float(np.linalg.norm(update_vector))
+        eps = float(getattr(self.cfg, "tangent_eps", 1e-12))
+        if not self.cfg.tangent_commitment_enabled:
+            return update_vector, {
+                "tangent_commitment_enabled": False,
+                "tangent_basis_rank_actual": 0,
+                "tangent_tau": float(tangent_tau),
+                "tangent_rho": 1.0,
+                "tangent_parallel_norm": original_norm,
+                "tangent_perp_norm": 0.0,
+                "tangent_null_ratio": 0.0,
+                "tangent_committed_update_norm": original_norm,
+                "tangent_original_update_norm": original_norm,
+                "tangent_update_shrink_ratio": float(original_norm / (original_norm + eps)),
+            }
+        return self.tangent_committer.commit(update_vector, previous_model, round_id, tangent_tau)
 
     def _validate_config(self) -> None:
         if self.cfg.initial_profile_id not in self.profiles:
             raise ValueError(f"initial_profile_id {self.cfg.initial_profile_id!r} is not defined in ckks_profiles")
         if self.cfg.reference_profile_id not in self.profiles:
             raise ValueError(f"reference_profile_id {self.cfg.reference_profile_id!r} is not defined in ckks_profiles")
-        positive_fields = ["lambda_", "gamma", "rho", "calibration_vectors", "perturbation_count", "perturbation_scale"]
+        positive_fields = ["lambda_", "gamma", "rho", "calibration_vectors", "perturbation_count", "perturbation_scale", "tangent_basis_rank", "tangent_max_proxy_batches", "tangent_tau_max", "tangent_tau_min", "tangent_lambda", "tangent_eps", "tangent_refresh_interval"]
         for field in positive_fields:
             value = getattr(self.cfg, field)
             if float(value) <= 0.0:
