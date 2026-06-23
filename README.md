@@ -133,3 +133,44 @@ Built-in components are registered in `factories/defaults.py`. The coordinator d
 ### No-defense mode
 
 Set `defense_name = "none"` in `config.py` to disable GeoChoke profile adaptation while keeping the encrypted aggregation pipeline unchanged. `NoDefense` always returns the configured initial CKKS profile and records `defense_enabled=False` in round metrics.
+
+## Aion single-mask secure aggregation simulator
+
+This repository also includes an optional `defense_name = "aion"` mode that simulates the protocol logic of **Aion: Robust and Efficient Multi-Round Single-Mask Secure Aggregation Against Malicious Participants** inside this single-process FL testbed. Aion is separate from GeoChoke: it does not use CFI, CKKS profile control, tangent commitment, patch detection, or any client-level unmasked update inspection.
+
+To run Aion, keep configuration in `config.py` and select the Aion example configuration or set the fields manually:
+
+```python
+from config import aion_config
+CONFIG = aion_config()
+```
+
+or:
+
+```python
+defense_name = "aion"
+attack_name = "dba"
+aggregation = "mean"
+aion.reconstruction_mode = "amr"
+```
+
+Aion's HPRF masks are additively homomorphic only for uniform sums/means. In Aion mode, the server uses uniform mean weights. If `aggregation="weighted_mean"` is used with unequal participant sample counts, the run raises `ValueError` instead of applying sample-count weights to masks.
+
+Implemented Aion components:
+
+- Feldman VSS over Shamir shares in a 2048-bit RFC 3526 safe-prime subgroup.
+- Deterministic key-homomorphic PRF masks derived from SHAKE256 public coefficients.
+- AMR (Aggregated Mask Reconstruction) as the default reconstruction path; ASR is intentionally rejected in strict mode unless CCS/disjoint client scheduling is implemented because it exposes the aggregated secret across overlapping rounds.
+- Masked Gradient Filtering (MGF) over masked update payload statistics, with evolving bounds.
+- Dynamic Mask Coverage / Dynamic Mask Removal style extra digits and post-unmask rounding.
+- A local BFT commitment simulator that checks `n >= 3f + 1`, commits online/valid sets and a model hash, and simulates aggregator HMAC signatures.
+
+Security boundary: this Aion integration is a **single-process protocol-faithful simulator**, not a distributed multi-aggregator network deployment. It preserves the project’s CKKS wrapper for transport and server aggregate decryption service, but the Aion defense logic treats uploaded values as masked updates and reconstructs only the aggregated mask. The server must not use sample-weighted masks, must not access unmasked individual client updates, and must not rely on GeoChoke calibration when `defense_name="aion"`.
+
+Aion writes protocol artifacts under `outputs/.../aion/`:
+
+- `aion_protocol_metrics.csv`
+- `aion_vss_init_summary.json`
+- `aion_hprf_validation.json`
+
+Important per-round CSV/log fields include `secure_aggregation_scheme`, `aion_reconstruction_mode`, `aion_valid_client_count`, `aion_filtered_client_count`, `aion_filter_rate`, `aion_bound`, `aion_alpha`, `aion_unmasked_aggregate_norm`, `aion_aggregated_mask_norm`, `aion_hprf_additivity_max_error`, `aion_bft_quorum_size`, and `aion_bft_required_quorum`.

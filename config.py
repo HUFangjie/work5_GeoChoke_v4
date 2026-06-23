@@ -35,6 +35,27 @@ class GeoChokeConfig:
     tangent_refresh_interval: int = 1
 
 @dataclass
+class AionConfig:
+    profile_id: str = "ckks_s40"
+    aggregator_count: int = 8
+    malicious_aggregator_count: int = 0
+    reconstruction_mode: str = "amr"
+    field_modulus_bits: int = 2048
+    vss_threshold: int | None = None
+    hprf_key_dim: int = 16
+    mask_ratio_beta: float = 0.2
+    hprf_hmax: float = 1.0
+    decimal_places: int = 8
+    initial_bound_multiplier: float = 1.05
+    initial_bound_quantile: float = 0.95
+    bound_min: float = 1e-12
+    enable_mgf: bool = True
+    enable_dmc_dmr: bool = True
+    enable_vss_verification: bool = True
+    allow_weighted_mean: bool = False
+    strict_protocol_checks: bool = True
+
+@dataclass
 class ExperimentConfig:
     seed: int = 7
     device: str = "cpu"
@@ -63,6 +84,7 @@ class ExperimentConfig:
     test_size: int = 256
     ckks_profiles: Dict[str, Dict[str, Any]] = field(default_factory=lambda: CKKS_PROFILES)
     geochoke: GeoChokeConfig = field(default_factory=GeoChokeConfig)
+    aion: AionConfig = field(default_factory=AionConfig)
     output_dir: str = "./outputs"
     log_level: str = "INFO"
     enable_plaintext_reference_metrics: bool = True
@@ -94,6 +116,10 @@ class ExperimentConfig:
 
 def strong_geochoke_config() -> ExperimentConfig:
     return ExperimentConfig()
+
+
+def aion_config() -> ExperimentConfig:
+    return ExperimentConfig(defense_name="aion", attack_name="dba", aggregation="mean")
 
 
 def mild_geochoke_config() -> ExperimentConfig:

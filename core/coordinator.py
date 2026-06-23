@@ -79,6 +79,7 @@ class FederatedCoordinator:
                 attack_strategy=self.attack,
                 malicious=client_id in self.cfg.malicious_client_ids,
                 cfg=self.cfg,
+                defense_strategy=self.defense,
             )
             for client_id, loader in enumerate(splits.client_loaders)
         ]
@@ -111,6 +112,7 @@ class FederatedCoordinator:
             uploads = []
             plaintext_updates_for_metrics = []
             plaintext_weights_for_metrics = []
+            plaintext_reference_by_client = {}
             for client_id in selected_client_ids:
                 record = record_by_client[client_id]
                 aggregation_weight = record.num_samples / total_samples if total_samples else 0.0
@@ -122,7 +124,7 @@ class FederatedCoordinator:
                     "malicious_weight": aggregation_weight,
                     "benign_selected_update_norm_mean": benign_selected_update_norm_mean,
                 }
-                upload = clients[client_id].encrypt_update(record, profile_id, attacker_context)
+                upload = clients[client_id].encrypt_update(record, profile_id, attacker_context, round_id=round_id)
                 uploads.append(upload)
                 if self.cfg.enable_plaintext_reference_metrics:
                     if clients[client_id].malicious:
@@ -136,11 +138,15 @@ class FederatedCoordinator:
                         reference_update = record.local_update.copy()
                     plaintext_updates_for_metrics.append(reference_update)
                     plaintext_weights_for_metrics.append(aggregation_weight)
+                    plaintext_reference_by_client[client_id] = reference_update
             plaintext_reference_update = None
             if self.cfg.enable_plaintext_reference_metrics and plaintext_updates_for_metrics:
-                plaintext_reference_update = np.zeros_like(plaintext_updates_for_metrics[0])
-                for reference_update, reference_weight in zip(plaintext_updates_for_metrics, plaintext_weights_for_metrics):
-                    plaintext_reference_update += reference_weight * reference_update
+                if getattr(self.defense, "use_uniform_aggregation_weights", lambda: False)():
+                    plaintext_reference_update = plaintext_reference_by_client
+                else:
+                    plaintext_reference_update = np.zeros_like(plaintext_updates_for_metrics[0])
+                    for reference_update, reference_weight in zip(plaintext_updates_for_metrics, plaintext_weights_for_metrics):
+                        plaintext_reference_update += reference_weight * reference_update
             decrypted_update, metrics = server.apply_round(
                 uploads,
                 round_id,
@@ -148,7 +154,8 @@ class FederatedCoordinator:
                 plaintext_reference_update=plaintext_reference_update,
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
-            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
+            valid_uploads_for_metrics = [upload for upload in uploads if upload.client_id in set(metrics.get("aion_valid_client_ids", [u.client_id for u in uploads]))]
+            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, valid_uploads_for_metrics)
             self.logger.info(
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
                 "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
