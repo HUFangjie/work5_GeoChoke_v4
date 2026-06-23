@@ -155,7 +155,15 @@ class FederatedCoordinator:
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
             valid_uploads_for_metrics = [upload for upload in uploads if upload.client_id in set(metrics.get("aion_valid_client_ids", [u.client_id for u in uploads]))]
-            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, valid_uploads_for_metrics)
+            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
+            if valid_uploads_for_metrics != uploads:
+                valid_dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, valid_uploads_for_metrics)
+                dba_metrics.update({
+                    "attack_active_after_filter": valid_dba_metrics.get("attack_active", False),
+                    "active_malicious_clients_after_filter": valid_dba_metrics.get("active_malicious_clients", []),
+                    "poisoned_sample_count_after_filter": valid_dba_metrics.get("poisoned_sample_count", 0),
+                    "effective_poison_ratio_after_filter": valid_dba_metrics.get("effective_poison_ratio", 0.0),
+                })
             self.logger.info(
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
                 "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
