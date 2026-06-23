@@ -55,7 +55,8 @@ def test_aion_two_round_dummy_flow():
             update = np.ones(codec.total_dimension) * (cid + 1)
             masked, md = defense.prepare_client_upload(cid, update, round_id, cfg.aion.profile_id, 1, {})
             encrypted = FakeCrypto().encrypt_update(masked, cfg.aion.profile_id)
-            uploads.append(type("Upload", (), {"client_id": cid, "num_samples": 1, "profile_id": cfg.aion.profile_id, "encrypted_update": encrypted, "metadata": {"train_loss": 0.0, **md}})())
+            payload = md.pop("aion_protocol_payload")
+            uploads.append(type("Upload", (), {"client_id": cid, "num_samples": 1, "profile_id": cfg.aion.profile_id, "encrypted_update": encrypted, "metadata": {"train_loss": 0.0, "is_malicious": False, **md}, "protocol_payload": payload})())
         _, metrics = server.apply_round(uploads, round_id, lambda aggregate, profile: aggregate.chunks[0].payload)
         assert metrics["defense_enabled"] is True
         assert metrics["secure_aggregation_scheme"] == "aion_single_mask"

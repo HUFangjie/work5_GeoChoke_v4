@@ -6,10 +6,11 @@ from defenses.aion.mgf import MaskedGradientFilter
 
 
 class Upload:
-    def __init__(self, client_id, norm):
+    def __init__(self, client_id, norm, malicious=False):
         self.client_id = client_id
         self.num_samples = 1
-        self.metadata = {"aion_masked_update_norm": norm}
+        self.metadata = {"aion_masked_update_norm": 0.0, "is_malicious": malicious}
+        self.protocol_payload = {"aion_masked_update_vector": np.array([norm], dtype=np.float64)}
 
 
 def test_mgf_filters_obviously_amplified_masked_update():

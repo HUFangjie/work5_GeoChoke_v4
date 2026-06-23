@@ -79,6 +79,8 @@ class AggregationServer:
         upload_list = original_upload_list
         defense_filter_metrics: dict[str, Any] = {}
         if hasattr(self.defense, "filter_uploads_before_aggregation"):
+            if hasattr(self.defense, "min_clients_per_round"):
+                self.defense.min_clients_per_round = int(self.cfg.min_clients_per_round)
             upload_list, defense_filter_metrics = self.defense.filter_uploads_before_aggregation(upload_list, round_id)
         previous_state = {name: tensor.detach().cpu().clone() for name, tensor in self.model.state_dict().items()}
         aggregate_ciphertext, aggregation_time, weights = self.aggregate_encrypted(upload_list)

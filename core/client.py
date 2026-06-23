@@ -103,6 +103,9 @@ class Client:
                 num_samples=update_record.num_samples,
                 metadata={**update_record.metadata, "num_selected": attacker_context.get("num_selected")},
             )
+        protocol_payload = {}
+        if isinstance(defense_metadata, dict) and "aion_protocol_payload" in defense_metadata:
+            protocol_payload = defense_metadata.pop("aion_protocol_payload")
         encrypted = self.crypto_backend.encrypt_update(prepared_update, profile_id)
         encryption_time = self.crypto_backend.last_encryption_time
         before_norm = float(np.linalg.norm(before))
@@ -135,4 +138,5 @@ class Client:
             profile_id=profile_id,
             encrypted_update=encrypted,
             metadata=metadata,
+            protocol_payload=protocol_payload,
         )
