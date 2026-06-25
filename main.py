@@ -14,7 +14,13 @@ from utils.seed import set_seed
 
 def _configure_experiment_output_dir() -> None:
     attack_mode = CONFIG.dba_attack_mode if CONFIG.attack_name == "dba" else "na"
-    run_dir = f"attack={CONFIG.attack_name}_defense={CONFIG.defense_name}_mode={attack_mode}_seed={CONFIG.seed}"
+    run_dir = (
+        f"dataset={CONFIG.dataset_name}_"
+        f"attack={CONFIG.attack_name}_"
+        f"defense={CONFIG.defense_name}_"
+        f"mode={attack_mode}_"
+        f"seed={CONFIG.seed}"
+    )
     if os.path.basename(os.path.normpath(CONFIG.output_dir)) != run_dir:
         CONFIG.output_dir = os.path.join(CONFIG.output_dir, run_dir)
 

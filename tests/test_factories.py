@@ -137,3 +137,43 @@ def test_new_builtin_dataset_and_model_registrations():
     model = create_model_factory(cfg).create()
     out = model(torch.zeros(2, 3, 32, 32))
     assert out.shape == (2, 10)
+
+
+def test_make_config_presets_and_validation():
+    from config import make_config
+
+    cases = [
+        ("mnist", "none", "none"),
+        ("mnist", "dba_multi", "none"),
+        ("mnist", "dba_multi", "geochoke_strong"),
+        ("fashion_mnist", "dba_multi", "geochoke_strong"),
+        ("cifar10", "dba_multi", "geochoke_strong"),
+    ]
+    for dataset_name, attack_name, defense_name in cases:
+        cfg = make_config(dataset=dataset_name, attack=attack_name, defense=defense_name, scale="debug", seed=7)
+        assert cfg.dataset.name == dataset_name
+        assert cfg.output_dir.endswith(f"/{dataset_name}")
+
+    cifar = make_config(dataset="cifar10", attack="dba_multi", defense="geochoke_strong", scale="debug", seed=7)
+    assert cifar.input_channels == 3
+    assert cifar.image_size == 32
+    assert cifar.model_name == "cifar10_cnn"
+    clean = make_config(dataset="mnist", attack="none", defense="none", scale="debug", seed=7)
+    assert clean.malicious_client_ids == []
+    assert clean.defense.name == "none"
+    assert clean.geochoke.tangent_commitment_enabled is False
+    strong = make_config(dataset="mnist", attack="dba_multi", defense="geochoke_strong", scale="debug", seed=7)
+    assert strong.geochoke.reference_profile_id == "ckks_s28"
+    overridden = make_config(
+        dataset="cifar10",
+        attack="dba_multi",
+        defense="geochoke_strong",
+        scale="standard",
+        seed=7,
+        dataset_overrides={"quick_data_limit": 6000, "proxy_size": 256, "test_size": 2000},
+        training_overrides={"num_rounds": 80},
+    )
+    assert overridden.quick_data_limit == 6000
+    assert overridden.proxy_size == 256
+    assert overridden.test_size == 2000
+    assert overridden.num_rounds == 80
