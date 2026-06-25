@@ -8,6 +8,8 @@ from core.decryption_service import AuthorizedDecryptionService
 from crypto.ckks_backend import CKKSBackend
 from crypto.ckks_context_manager import CKKSContextManager
 from data.mnist import MNISTProvider
+from data.fashion_mnist import FashionMNISTProvider
+from data.cifar10 import CIFAR10Provider
 from defenses.geochoke.defense import GeoChokeDefense
 from defenses.no_defense import NoDefense
 from factories.registries import ATTACK_REGISTRY
@@ -16,6 +18,7 @@ from factories.dataset_factory import DATASET_REGISTRY
 from factories.defense_factory import DEFENSE_REGISTRY
 from factories.model_factory import MODEL_REGISTRY
 from models.mnist_cnn import MNISTCNN
+from models.cifar10_cnn import CIFAR10CNN
 
 
 def register_defaults() -> None:
@@ -28,7 +31,10 @@ def register_defaults() -> None:
     """
 
     DATASET_REGISTRY.setdefault("mnist", MNISTProvider)
+    DATASET_REGISTRY.setdefault("fashion_mnist", FashionMNISTProvider)
+    DATASET_REGISTRY.setdefault("cifar10", CIFAR10Provider)
     MODEL_REGISTRY.setdefault("mnist_cnn", _create_mnist_cnn)
+    MODEL_REGISTRY.setdefault("cifar10_cnn", _create_cifar10_cnn)
     ATTACK_REGISTRY.setdefault("none", _create_no_attack)
     ATTACK_REGISTRY.setdefault("alie", _create_alie)
     ATTACK_REGISTRY.setdefault("fang_mean", _create_fang_mean)
@@ -41,6 +47,10 @@ def register_defaults() -> None:
 
 def _create_mnist_cnn():
     return MNISTCNN()
+
+
+def _create_cifar10_cnn():
+    return CIFAR10CNN()
 
 
 def _create_no_attack(cfg):

@@ -156,7 +156,8 @@ class DBAAttack(AttackStrategy):
             raise ValueError("DBA schedule must satisfy start_round <= end_round < num_rounds")
         if len(self.cfg.malicious_client_ids) < int(self.cfg.dba_num_trigger_parts):
             raise ValueError("DBA requires at least dba_num_trigger_parts malicious clients to avoid centralized backdoor behavior")
-        DBATrigger(self.cfg).validate_layout(28, 28)
+        image_size = int(getattr(self.cfg, "image_size", 28))
+        DBATrigger(self.cfg).validate_layout(image_size, image_size)
 
     def scale_factor_for_mode(self) -> float:
         if self.cfg.dba_attack_mode == "single_shot":
