@@ -151,6 +151,7 @@ class FederatedCoordinator:
             dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
             self.logger.info(
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
+                "global_trigger_raw_asr=%s global_clean_target_rate=%s global_trigger_asr_lift=%s "
                 "local_trigger_1_asr=%s local_trigger_2_asr=%s local_trigger_3_asr=%s local_trigger_4_asr=%s "
                 "attack_active=%s active_malicious_clients=%s poisoned_sample_count=%s effective_poison_ratio=%s current_ckks_profile=%s "
                 "previous_cfi=%s candidate_cfi=%s fragility_injection_score=%s cfi_nonnegative_check=%s cfi_reference_profile_id=%s perturbation_count=%s perturbation_scale=%s tangent_tau=%s tangent_rho=%s tangent_null_ratio=%s tangent_update_shrink_ratio=%s",
@@ -158,6 +159,9 @@ class FederatedCoordinator:
                 test_accuracy,
                 test_loss,
                 dba_metrics.get("global_trigger_asr"),
+                dba_metrics.get("global_trigger_raw_asr"),
+                dba_metrics.get("global_clean_target_rate"),
+                dba_metrics.get("global_trigger_asr_lift"),
                 dba_metrics.get("local_trigger_1_asr"),
                 dba_metrics.get("local_trigger_2_asr"),
                 dba_metrics.get("local_trigger_3_asr"),
