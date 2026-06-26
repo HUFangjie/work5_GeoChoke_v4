@@ -194,10 +194,38 @@ def _replace_with_overrides(config: Any, overrides: Dict[str, Any]) -> Any:
 
 
 def dataset_config(name: str, **overrides: Any) -> DatasetConfig:
+    # Dataset presets include shape/model metadata and a sensible default data
+    # budget so switching datasets usually does not require dataset_overrides.
     presets = {
-        "mnist": DatasetConfig(name="mnist", input_channels=1, image_size=28, model_name="mnist_cnn"),
-        "fashion_mnist": DatasetConfig(name="fashion_mnist", input_channels=1, image_size=28, model_name="mnist_cnn"),
-        "cifar10": DatasetConfig(name="cifar10", input_channels=3, image_size=32, model_name="cifar10_cnn"),
+        "mnist": DatasetConfig(
+            name="mnist",
+            input_channels=1,
+            image_size=28,
+            model_name="mnist_cnn",
+            quick_data_limit=600,
+            proxy_size=64,
+            test_size=256,
+        ),
+        "fashion_mnist": DatasetConfig(
+            name="fashion_mnist",
+            input_channels=1,
+            image_size=28,
+            model_name="mnist_cnn",
+            quick_data_limit=600,
+            proxy_size=64,
+            test_size=256,
+        ),
+        "cifar10": DatasetConfig(
+            name="cifar10",
+            input_channels=3,
+            image_size=32,
+            model_name="cifar10_cnn",
+            quick_data_limit=6000,
+            proxy_size=256,
+            test_size=2000,
+            partition_type="dirichlet",
+            dirichlet_alpha=0.5,
+        ),
     }
     if name not in presets:
         raise ValueError(f"Unknown dataset preset: {name}. Available: {sorted(presets)}")
@@ -468,13 +496,6 @@ def mild_geochoke_config(dataset_name: str = "mnist") -> ExperimentConfig:
 #     defense="geochoke_strong",
 #     scale="standard",
 #     seed=7,
-#     dataset_overrides={
-#         "quick_data_limit": 6000,
-#         "proxy_size": 256,
-#         "test_size": 2000,
-#         "partition_type": "dirichlet",
-#         "dirichlet_alpha": 0.5,
-#     },
 #     training_overrides={
 #         "num_clients": 10,
 #         "clients_per_round": 10,

@@ -120,6 +120,10 @@ def test_structured_config_aliases_and_dataset_presets():
     assert cfg.model_name == "cifar10_cnn"
     assert cfg.input_channels == 3
     assert cfg.image_size == 32
+    assert cfg.quick_data_limit == 6000
+    assert cfg.proxy_size == 256
+    assert cfg.test_size == 2000
+    assert cfg.partition_type == "dirichlet"
     cfg.dataset_name = "fashion_mnist"
     cfg.model_name = "mnist_cnn"
     assert cfg.dataset.name == "fashion_mnist"
@@ -158,6 +162,10 @@ def test_make_config_presets_and_validation():
     assert cifar.input_channels == 3
     assert cifar.image_size == 32
     assert cifar.model_name == "cifar10_cnn"
+    assert cifar.quick_data_limit == 6000
+    assert cifar.proxy_size == 256
+    assert cifar.test_size == 2000
+    assert cifar.partition_type == "dirichlet"
     clean = make_config(dataset="mnist", attack="none", defense="none", scale="debug", seed=7)
     assert clean.malicious_client_ids == []
     assert clean.defense.name == "none"
