@@ -66,11 +66,16 @@ class Evaluator:
             "asr_lift": (raw_hits - clean_target_hits) / n,
         }
 
-    def evaluate_dba(self, model, attack, cfg, profile_id, uploads):
-        if cfg.attack_name != "dba" or not hasattr(attack, "trigger"):
+    def evaluate_backdoor(self, model, attack, cfg, profile_id, uploads):
+        transform = None
+        if hasattr(attack, "trigger") and hasattr(attack.trigger, "apply_global"):
+            transform = attack.trigger.apply_global
+        elif hasattr(attack, "apply_global_trigger"):
+            transform = attack.apply_global_trigger
+        if transform is None:
             return {}
-        target = int(cfg.dba_target_label)
-        global_metrics = self._asr_metrics(model, attack.trigger.apply_global, target)
+        target = int(getattr(cfg, f"{cfg.attack_name}_target_label", getattr(cfg, "dba_target_label", 0)))
+        global_metrics = self._asr_metrics(model, transform, target)
         poisoned = int(sum(upload.metadata.get("poisoned_sample_count", 0) for upload in uploads))
         seen = int(sum(upload.metadata.get("dba_seen_sample_count", 0) for upload in uploads if upload.metadata.get("dba_attack_active", False)))
         metrics = {
@@ -92,20 +97,24 @@ class Evaluator:
             "dba_scale_factor": float(max([upload.metadata.get("dba_scale_factor", 0.0) for upload in uploads if upload.metadata.get("dba_attack_active", False)] or [0.0])),
             "current_ckks_profile": profile_id,
         }
-        for trigger_id in range(int(cfg.dba_num_trigger_parts)):
-            local_metrics = self._asr_metrics(
-                model,
-                lambda x, trigger_id=trigger_id: attack.trigger.apply_local(x, trigger_id),
-                target,
-            )
-            prefix = f"local_trigger_{trigger_id + 1}"
-            metrics[f"{prefix}_asr"] = local_metrics["asr"]
-            metrics[f"{prefix}_hits"] = local_metrics["hits"]
-            metrics[f"{prefix}_test_count"] = local_metrics["test_count"]
-            metrics[f"{prefix}_eligible_test_count"] = local_metrics["eligible_test_count"]
-            metrics[f"{prefix}_raw_asr"] = local_metrics["raw_asr"]
-            metrics[f"{prefix}_raw_hits"] = local_metrics["raw_hits"]
-            metrics[f"{prefix}_clean_target_rate"] = local_metrics["clean_target_rate"]
-            metrics[f"{prefix}_clean_target_hits"] = local_metrics["clean_target_hits"]
-            metrics[f"{prefix}_asr_lift"] = local_metrics["asr_lift"]
+        if cfg.attack_name == "dba" and hasattr(attack, "trigger") and hasattr(attack.trigger, "apply_local"):
+            for trigger_id in range(int(cfg.dba_num_trigger_parts)):
+                local_metrics = self._asr_metrics(
+                    model,
+                    lambda x, trigger_id=trigger_id: attack.trigger.apply_local(x, trigger_id),
+                    target,
+                )
+                prefix = f"local_trigger_{trigger_id + 1}"
+                metrics[f"{prefix}_asr"] = local_metrics["asr"]
+                metrics[f"{prefix}_hits"] = local_metrics["hits"]
+                metrics[f"{prefix}_test_count"] = local_metrics["test_count"]
+                metrics[f"{prefix}_eligible_test_count"] = local_metrics["eligible_test_count"]
+                metrics[f"{prefix}_raw_asr"] = local_metrics["raw_asr"]
+                metrics[f"{prefix}_raw_hits"] = local_metrics["raw_hits"]
+                metrics[f"{prefix}_clean_target_rate"] = local_metrics["clean_target_rate"]
+                metrics[f"{prefix}_clean_target_hits"] = local_metrics["clean_target_hits"]
+                metrics[f"{prefix}_asr_lift"] = local_metrics["asr_lift"]
         return metrics
+
+    def evaluate_dba(self, model, attack, cfg, profile_id, uploads):
+        return self.evaluate_backdoor(model, attack, cfg, profile_id, uploads)

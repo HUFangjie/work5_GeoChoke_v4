@@ -16,7 +16,7 @@ CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 VALID_DATASETS = {"mnist", "fashion_mnist", "cifar10"}
-VALID_ATTACKS = {"none", "alie", "fang_mean", "dba"}
+VALID_ATTACKS = {"none", "alie", "fang_mean", "dba", "neurotoxin", "a3fl", "three_dfed"}
 VALID_DEFENSES = {"none", "no_defense", "geochoke"}
 
 
@@ -61,6 +61,54 @@ class AttackConfig:
     dba_trigger_gap: int = 2
     dba_trigger_location: str = "top_left"
     dba_trigger_value: float = 1.0
+
+    neurotoxin_target_label: int = 2
+    neurotoxin_poison_ratio: float = 0.3125
+    neurotoxin_local_epochs: int = 5
+    neurotoxin_local_lr: float = 0.05
+    neurotoxin_scale_factor: float = 1.0
+    neurotoxin_attack_start_round: int = 0
+    neurotoxin_attack_end_round: int = 19
+    neurotoxin_trigger_size: int = 4
+    neurotoxin_trigger_location: str = "top_left"
+    neurotoxin_trigger_value: float = 1.0
+    neurotoxin_topk_ratio: float = 0.1
+    neurotoxin_mask_decay: float = 0.0
+
+    a3fl_target_label: int = 2
+    a3fl_poison_ratio: float = 0.3125
+    a3fl_local_epochs: int = 3
+    a3fl_local_lr: float = 0.05
+    a3fl_scale_factor: float = 1.0
+    a3fl_attack_start_round: int = 0
+    a3fl_attack_end_round: int = 19
+    a3fl_trigger_size: int = 4
+    a3fl_trigger_location: str = "top_left"
+    a3fl_trigger_init: float = 1.0
+    a3fl_trigger_steps: int = 2
+    a3fl_adv_steps: int = 1
+    a3fl_trigger_lr: float = 0.05
+    a3fl_adv_lr: float = 0.01
+    a3fl_lambda: float = 1.0
+
+    three_dfed_target_label: int = 2
+    three_dfed_poison_ratio: float = 0.3125
+    three_dfed_local_epochs: int = 3
+    three_dfed_local_lr: float = 0.05
+    three_dfed_scale_factor: float = 1.0
+    three_dfed_attack_start_round: int = 0
+    three_dfed_attack_end_round: int = 19
+    three_dfed_trigger_size: int = 4
+    three_dfed_trigger_location: str = "top_left"
+    three_dfed_trigger_value: float = 1.0
+    three_dfed_constrain_beta: float = 1e-3
+    three_dfed_noise_alpha: float = 0.05
+    three_dfed_norm_cap: float = 0.0
+    three_dfed_decoy_fraction: float = 0.25
+    three_dfed_decoy_client_ids: List[int] = field(default_factory=list)
+    three_dfed_decoy_coordinate_ratio: float = 0.01
+    three_dfed_decoy_std: float = 0.05
+    three_dfed_indicator_enabled: bool = False
 
 
 @dataclass
@@ -323,6 +371,40 @@ def attack_config(name: str = "none", **overrides: Any) -> AttackConfig:
             fang_max_norm=5.0,
             fang_search_steps=6,
         ),
+        "neurotoxin": AttackConfig(
+            name="neurotoxin",
+            malicious_client_ids=[1, 2],
+            neurotoxin_target_label=2,
+            neurotoxin_poison_ratio=0.3125,
+            neurotoxin_local_epochs=5,
+            neurotoxin_local_lr=0.05,
+            neurotoxin_attack_start_round=0,
+            neurotoxin_attack_end_round=19,
+            neurotoxin_topk_ratio=0.1,
+            neurotoxin_mask_decay=0.0,
+        ),
+        "a3fl": AttackConfig(
+            name="a3fl",
+            malicious_client_ids=[1, 2],
+            a3fl_target_label=2,
+            a3fl_poison_ratio=0.3125,
+            a3fl_local_epochs=3,
+            a3fl_local_lr=0.05,
+            a3fl_attack_start_round=0,
+            a3fl_attack_end_round=19,
+            a3fl_trigger_steps=2,
+            a3fl_adv_steps=1,
+        ),
+        "three_dfed": AttackConfig(
+            name="three_dfed",
+            malicious_client_ids=[1, 2, 3, 4],
+            three_dfed_target_label=2,
+            three_dfed_poison_ratio=0.3125,
+            three_dfed_local_epochs=3,
+            three_dfed_local_lr=0.05,
+            three_dfed_attack_start_round=0,
+            three_dfed_attack_end_round=19,
+        ),
     }
     if name not in presets:
         raise ValueError(f"Unknown attack preset: {name}. Available: {sorted(presets)}")
@@ -441,6 +523,22 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError(f"malicious_client_ids must be in [0, {cfg.training.num_clients - 1}], got {invalid_clients}")
     if cfg.attack.name == "none" and cfg.attack.malicious_client_ids:
         raise ValueError("malicious_client_ids must be empty when attack.name == 'none'")
+    for prefix in ["neurotoxin", "a3fl", "three_dfed"]:
+        if cfg.attack.name == prefix:
+            start = int(getattr(cfg.attack, f"{prefix}_attack_start_round"))
+            end = int(getattr(cfg.attack, f"{prefix}_attack_end_round"))
+            if not 0 <= start <= end < cfg.training.num_rounds:
+                raise ValueError(f"{prefix} schedule must satisfy 0 <= start_round <= end_round < num_rounds")
+            target = int(getattr(cfg.attack, f"{prefix}_target_label"))
+            if not 0 <= target < cfg.dataset.num_classes:
+                raise ValueError(f"{prefix}_target_label must satisfy 0 <= target_label < dataset.num_classes")
+            ratio = float(getattr(cfg.attack, f"{prefix}_poison_ratio"))
+            if not 0.0 < ratio < 1.0:
+                raise ValueError(f"{prefix}_poison_ratio must satisfy 0.0 < ratio < 1.0")
+            trigger_size = int(getattr(cfg.attack, f"{prefix}_trigger_size"))
+            if trigger_size > cfg.dataset.image_size:
+                raise ValueError(f"{prefix} trigger_size does not fit image_size={cfg.dataset.image_size}")
+
     if cfg.attack.name == "dba":
         if cfg.attack.dba_attack_mode not in {"multi_shot", "single_shot"}:
             raise ValueError("dba_attack_mode must be 'multi_shot' or 'single_shot'")

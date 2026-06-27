@@ -148,7 +148,7 @@ class FederatedCoordinator:
                 plaintext_reference_update=plaintext_reference_update,
             )
             test_loss, test_accuracy = evaluator.evaluate(server.model)
-            dba_metrics = evaluator.evaluate_dba(server.model, self.attack, self.cfg, profile_id, uploads)
+            dba_metrics = evaluator.evaluate_backdoor(server.model, self.attack, self.cfg, profile_id, uploads)
             self.logger.info(
                 "round=%s clean_test_accuracy=%.6f test_loss=%.6f global_trigger_asr=%s "
                 "global_trigger_raw_asr=%s global_clean_target_rate=%s global_trigger_asr_lift=%s "
@@ -210,7 +210,7 @@ class FederatedCoordinator:
                     {
                         "round": round_id,
                         "client_id": upload.client_id,
-                        "attack_name": self.cfg.attack_name if (upload.metadata["is_malicious"] and (self.cfg.attack_name != "dba" or upload.metadata.get("dba_attack_active", False))) else "none",
+                        "attack_name": upload.metadata.get("attack_name", self.cfg.attack_name) if upload.metadata["is_malicious"] else "none",
                         "is_malicious": upload.metadata["is_malicious"],
                         "malicious_update_norm_before": upload.metadata["malicious_update_norm_before"],
                         "malicious_update_norm_after": upload.metadata["malicious_update_norm_after"],
@@ -251,19 +251,29 @@ class FederatedCoordinator:
                 writer.writeheader()
 
     def _write_trigger_artifacts(self) -> None:
-        if self.cfg.attack_name != "dba" or not hasattr(self.attack, "trigger"):
+        if not hasattr(self.attack, "trigger"):
             return
         import numpy as np
+
         trigger = self.attack.trigger
-        masks = []
-        for trigger_id in range(int(self.cfg.dba_num_trigger_parts)):
-            mask = np.zeros((28, 28), dtype=np.float32)
-            r0, r1, c0, c1 = trigger.region(trigger_id, 28, 28)
-            mask[r0:r1, c0:c1] = 1.0
-            masks.append(mask)
-        local_masks = np.stack(masks, axis=0)
-        global_mask = local_masks.max(axis=0)
-        np.save(os.path.join(self.cfg.output_dir, "local_trigger_masks.npy"), local_masks)
+        image_size = int(getattr(self.cfg, "image_size", getattr(self.cfg.dataset, "image_size", 28)))
+        channels = int(getattr(self.cfg, "input_channels", getattr(self.cfg.dataset, "input_channels", 1)))
+        local_masks = None
+        if self.cfg.attack_name == "dba" and hasattr(trigger, "region"):
+            masks = []
+            for trigger_id in range(int(self.cfg.dba_num_trigger_parts)):
+                mask = np.zeros((image_size, image_size), dtype=np.float32)
+                r0, r1, c0, c1 = trigger.region(trigger_id, image_size, image_size)
+                mask[r0:r1, c0:c1] = 1.0
+                masks.append(mask)
+            local_masks = np.stack(masks, axis=0)
+            global_mask = local_masks.max(axis=0)
+            np.save(os.path.join(self.cfg.output_dir, "local_trigger_masks.npy"), local_masks)
+        elif hasattr(trigger, "mask"):
+            mask_tensor = trigger.mask(channels, image_size, image_size)
+            global_mask = mask_tensor.detach().cpu().numpy().max(axis=0) if hasattr(mask_tensor, "detach") else np.asarray(mask_tensor).max(axis=0)
+        else:
+            return
         np.save(os.path.join(self.cfg.output_dir, "global_trigger_mask.npy"), global_mask)
         try:
             from PIL import Image

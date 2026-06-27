@@ -56,3 +56,43 @@ def test_dba_asr_counts_trigger_only_successes():
     assert metrics["eligible_test_count"] == 4
     assert metrics["asr"] == 1.0
     assert metrics["hits"] == 4
+
+
+def test_new_attack_factories_instantiate():
+    from config import make_config
+    from factories.attack_factory import create_attack
+
+    expected = {
+        "neurotoxin": "NeurotoxinAttack",
+        "a3fl": "A3FLAttack",
+        "three_dfed": "ThreeDFedAttack",
+    }
+    for preset, class_name in expected.items():
+        cfg = make_config(dataset="mnist", attack=preset, defense="none", scale="debug", seed=7)
+        assert create_attack(cfg).__class__.__name__ == class_name
+
+
+def test_new_vector_attack_craft_outputs_are_valid():
+    import numpy as np
+
+    from config import make_config
+    from factories.attack_factory import create_attack
+
+    clean_update = np.linspace(-1.0, 1.0, 20, dtype=np.float64)
+    observable = [np.linspace(0.0, 2.0, 20, dtype=np.float64), np.linspace(0.0, 1.0, 20, dtype=np.float64)]
+    for preset in ["neurotoxin", "a3fl", "three_dfed"]:
+        cfg = make_config(dataset="mnist", attack=preset, defense="none", scale="debug", seed=7)
+        attack = create_attack(cfg)
+        crafted = attack.craft_update(1, clean_update.copy(), None, {"observable_updates": observable})
+        assert crafted.shape == clean_update.shape
+        assert crafted.ndim == 1
+        assert np.all(np.isfinite(crafted))
+
+
+def test_required_attack_presets_still_construct():
+    from config import make_config
+    from factories.attack_factory import create_attack
+
+    for preset in ["none", "dba_multi", "neurotoxin", "a3fl", "three_dfed"]:
+        cfg = make_config(dataset="mnist", attack=preset, defense="none", scale="debug", seed=7)
+        assert create_attack(cfg) is not None

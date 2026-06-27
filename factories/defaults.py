@@ -4,6 +4,9 @@ from attacks.alie import ALIEAttack
 from attacks.fang import FangMeanAttack
 from attacks.dba import DBAAttack
 from attacks.no_attack import NoAttack
+from attacks.neurotoxin import NeurotoxinAttack
+from attacks.a3fl import A3FLAttack
+from attacks.three_dfed import ThreeDFedAttack
 from core.decryption_service import AuthorizedDecryptionService
 from crypto.ckks_backend import CKKSBackend
 from crypto.ckks_context_manager import CKKSContextManager
@@ -39,6 +42,9 @@ def register_defaults() -> None:
     ATTACK_REGISTRY.setdefault("alie", _create_alie)
     ATTACK_REGISTRY.setdefault("fang_mean", _create_fang_mean)
     ATTACK_REGISTRY.setdefault("dba", _create_dba)
+    ATTACK_REGISTRY.setdefault("neurotoxin", _create_neurotoxin)
+    ATTACK_REGISTRY.setdefault("a3fl", _create_a3fl)
+    ATTACK_REGISTRY.setdefault("three_dfed", _create_three_dfed)
     CRYPTO_REGISTRY.setdefault("ckks", _create_ckks)
     DEFENSE_REGISTRY.setdefault("geochoke", _create_geochoke)
     DEFENSE_REGISTRY.setdefault("none", _create_no_defense)
@@ -67,6 +73,18 @@ def _create_fang_mean(cfg):
 
 def _create_dba(cfg):
     return DBAAttack(cfg)
+
+
+def _create_neurotoxin(cfg):
+    return NeurotoxinAttack(cfg)
+
+
+def _create_a3fl(cfg):
+    return A3FLAttack(cfg)
+
+
+def _create_three_dfed(cfg):
+    return ThreeDFedAttack(cfg)
 
 
 def _create_ckks(cfg):
