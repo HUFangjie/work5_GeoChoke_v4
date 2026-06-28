@@ -87,6 +87,10 @@ class Client:
         else:
             final_update = before
         attack_time = time.perf_counter() - start_time
+        if final_update.shape != before.shape:
+            raise ValueError(f"client {self.client_id} produced update shape {final_update.shape}, expected {before.shape}")
+        if final_update.ndim != 1:
+            raise ValueError(f"client {self.client_id} produced a non-1D update")
         if not np.all(np.isfinite(final_update)):
             raise ValueError(f"client {self.client_id} produced a non-finite update")
         encrypted = self.crypto_backend.encrypt_update(final_update, profile_id)
@@ -95,6 +99,9 @@ class Client:
         after_norm = float(np.linalg.norm(final_update))
         cosine = float(np.dot(before, final_update) / (before_norm * after_norm + 1e-12))
         benign_norm_mean = float(attacker_context.get("benign_selected_update_norm_mean", 0.0))
+        attack_extra = {}
+        if self.malicious and hasattr(self.attack_strategy, "pop_last_metadata"):
+            attack_extra = self.attack_strategy.pop_last_metadata(self.client_id)
         dba_extra = {}
         if update_record.metadata.get("dba_attack_active", False):
             poisoned_norm = float(update_record.metadata.get("poisoned_update_norm", after_norm))
@@ -109,9 +116,10 @@ class Client:
             "malicious_update_norm_before": before_norm,
             "malicious_update_norm_after": after_norm,
             "cosine_before_after": cosine,
-            "attack_applied_before_encryption": bool(update_record.metadata.get("dba_attack_active", False) or (self.malicious and self.cfg.attack_name != "dba")),
+            "attack_applied_before_encryption": bool(update_record.metadata.get("dba_attack_active", False) or update_record.metadata.get("backdoor_attack_active", False) or (self.malicious and self.cfg.attack_name != "dba")),
             "is_malicious": bool(self.malicious),
             **update_record.metadata,
+            **attack_extra,
             **dba_extra,
         }
         return ClientUpload(

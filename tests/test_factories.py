@@ -109,3 +109,79 @@ def test_default_registration_recovers_after_registry_mutation():
         DATASET_REGISTRY.update(saved_datasets)
         MODEL_REGISTRY.clear()
         MODEL_REGISTRY.update(saved_models)
+
+
+def test_structured_config_aliases_and_dataset_presets():
+    from config import AttackConfig, DatasetConfig, dataset_config
+
+    cfg = ExperimentConfig(dataset=dataset_config("cifar10"), attack=AttackConfig(name="none", malicious_client_ids=[]))
+    assert cfg.dataset.name == "cifar10"
+    assert cfg.dataset_name == "cifar10"
+    assert cfg.model_name == "cifar10_cnn"
+    assert cfg.input_channels == 3
+    assert cfg.image_size == 32
+    assert cfg.quick_data_limit == 6000
+    assert cfg.proxy_size == 256
+    assert cfg.test_size == 2000
+    assert cfg.partition_type == "dirichlet"
+    cfg.dataset_name = "fashion_mnist"
+    cfg.model_name = "mnist_cnn"
+    assert cfg.dataset.name == "fashion_mnist"
+    assert cfg.dataset.model_name == "mnist_cnn"
+    cfg = ExperimentConfig(dataset=DatasetConfig(name="mnist"), attack_name="none")
+    assert cfg.attack.name == "none"
+
+
+def test_new_builtin_dataset_and_model_registrations():
+    cfg = ExperimentConfig(dataset_name="fashion_mnist", model_name="mnist_cnn", malicious_client_ids=[])
+    assert create_dataset_provider(cfg).__class__.__name__ == "FashionMNISTProvider"
+    assert create_model_factory(cfg).name == "mnist_cnn"
+    cfg = ExperimentConfig(dataset_name="cifar10", model_name="cifar10_cnn", malicious_client_ids=[])
+    assert create_dataset_provider(cfg).__class__.__name__ == "CIFAR10Provider"
+    model = create_model_factory(cfg).create()
+    out = model(torch.zeros(2, 3, 32, 32))
+    assert out.shape == (2, 10)
+
+
+def test_make_config_presets_and_validation():
+    from config import make_config
+
+    cases = [
+        ("mnist", "none", "none"),
+        ("mnist", "dba_multi", "none"),
+        ("mnist", "dba_multi", "geochoke_strong"),
+        ("fashion_mnist", "dba_multi", "geochoke_strong"),
+        ("cifar10", "dba_multi", "geochoke_strong"),
+    ]
+    for dataset_name, attack_name, defense_name in cases:
+        cfg = make_config(dataset=dataset_name, attack=attack_name, defense=defense_name, scale="debug", seed=7)
+        assert cfg.dataset.name == dataset_name
+        assert cfg.output_dir.endswith(f"/{dataset_name}")
+
+    cifar = make_config(dataset="cifar10", attack="dba_multi", defense="geochoke_strong", scale="debug", seed=7)
+    assert cifar.input_channels == 3
+    assert cifar.image_size == 32
+    assert cifar.model_name == "cifar10_cnn"
+    assert cifar.quick_data_limit == 6000
+    assert cifar.proxy_size == 256
+    assert cifar.test_size == 2000
+    assert cifar.partition_type == "dirichlet"
+    clean = make_config(dataset="mnist", attack="none", defense="none", scale="debug", seed=7)
+    assert clean.malicious_client_ids == []
+    assert clean.defense.name == "none"
+    assert clean.geochoke.tangent_commitment_enabled is False
+    strong = make_config(dataset="mnist", attack="dba_multi", defense="geochoke_strong", scale="debug", seed=7)
+    assert strong.geochoke.reference_profile_id == "ckks_s28"
+    overridden = make_config(
+        dataset="cifar10",
+        attack="dba_multi",
+        defense="geochoke_strong",
+        scale="standard",
+        seed=7,
+        dataset_overrides={"quick_data_limit": 6000, "proxy_size": 256, "test_size": 2000},
+        training_overrides={"num_rounds": 80},
+    )
+    assert overridden.quick_data_limit == 6000
+    assert overridden.proxy_size == 256
+    assert overridden.test_size == 2000
+    assert overridden.num_rounds == 80
