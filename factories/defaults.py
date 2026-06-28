@@ -7,6 +7,7 @@ from attacks.no_attack import NoAttack
 from attacks.neurotoxin import NeurotoxinAttack
 from attacks.a3fl import A3FLAttack
 from attacks.three_dfed import ThreeDFedAttack
+from attacks.adaptive_geochoke import AdaptiveGeoChokeAttack
 from core.decryption_service import AuthorizedDecryptionService
 from crypto.ckks_backend import CKKSBackend
 from crypto.ckks_context_manager import CKKSContextManager
@@ -45,6 +46,7 @@ def register_defaults() -> None:
     ATTACK_REGISTRY.setdefault("neurotoxin", _create_neurotoxin)
     ATTACK_REGISTRY.setdefault("a3fl", _create_a3fl)
     ATTACK_REGISTRY.setdefault("three_dfed", _create_three_dfed)
+    ATTACK_REGISTRY.setdefault("adaptive_geochoke", _create_adaptive_geochoke)
     CRYPTO_REGISTRY.setdefault("ckks", _create_ckks)
     DEFENSE_REGISTRY.setdefault("geochoke", _create_geochoke)
     DEFENSE_REGISTRY.setdefault("none", _create_no_defense)
@@ -85,6 +87,10 @@ def _create_a3fl(cfg):
 
 def _create_three_dfed(cfg):
     return ThreeDFedAttack(cfg)
+
+
+def _create_adaptive_geochoke(cfg):
+    return AdaptiveGeoChokeAttack(cfg)
 
 
 def _create_ckks(cfg):

@@ -54,7 +54,7 @@ def test_end_to_end_smoke(tmp_path):
 def test_new_backdoor_attacks_end_to_end_smoke(tmp_path):
     from config import make_config
 
-    for attack_name in ["neurotoxin", "a3fl", "three_dfed"]:
+    for attack_name in ["neurotoxin", "a3fl", "three_dfed", "adaptive_geochoke"]:
         cfg = make_config(
             dataset="mnist",
             attack=attack_name,
@@ -68,8 +68,9 @@ def test_new_backdoor_attacks_end_to_end_smoke(tmp_path):
                 "malicious_client_ids": [1],
                 f"{attack_name}_attack_start_round": 0,
                 f"{attack_name}_attack_end_round": 0,
-                f"{attack_name}_local_epochs": 1,
+                **({"adaptive_geochoke_local_epochs": 1} if attack_name == "adaptive_geochoke" else {f"{attack_name}_local_epochs": 1}),
                 **({"a3fl_trigger_steps": 1, "a3fl_adv_steps": 1} if attack_name == "a3fl" else {}),
+                **({"adaptive_geochoke_proxy_batches": 1, "adaptive_geochoke_basis_rank": 1} if attack_name == "adaptive_geochoke" else {}),
             },
         )
         cfg.dataset_name = "dummy"

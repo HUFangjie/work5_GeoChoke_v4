@@ -16,7 +16,7 @@ CKKS_PROFILES: Dict[str, Dict[str, Any]] = {
 }
 
 VALID_DATASETS = {"mnist", "fashion_mnist", "cifar10"}
-VALID_ATTACKS = {"none", "alie", "fang_mean", "dba", "neurotoxin", "a3fl", "three_dfed"}
+VALID_ATTACKS = {"none", "alie", "fang_mean", "dba", "neurotoxin", "a3fl", "three_dfed", "adaptive_geochoke"}
 VALID_DEFENSES = {"none", "no_defense", "geochoke"}
 
 
@@ -109,6 +109,22 @@ class AttackConfig:
     three_dfed_decoy_coordinate_ratio: float = 0.01
     three_dfed_decoy_std: float = 0.05
     three_dfed_indicator_enabled: bool = False
+
+    adaptive_geochoke_target_label: int = 2
+    adaptive_geochoke_poison_ratio: float = 0.3125
+    adaptive_geochoke_local_epochs: int = 3
+    adaptive_geochoke_lr: float = 0.05
+    adaptive_geochoke_trigger_size: int = 4
+    adaptive_geochoke_trigger_location: str = "top_left"
+    adaptive_geochoke_trigger_value: float = 1.0
+    adaptive_geochoke_attack_start_round: int = 0
+    adaptive_geochoke_attack_end_round: int = 19
+    adaptive_geochoke_scale_factor: float = 1.0
+    adaptive_geochoke_align_lambda: float = 1.0
+    adaptive_geochoke_orth_lambda: float = 4.0
+    adaptive_geochoke_cfi_lambda: float = 0.0
+    adaptive_geochoke_proxy_batches: int = 4
+    adaptive_geochoke_basis_rank: int = 8
 
 
 @dataclass
@@ -405,6 +421,21 @@ def attack_config(name: str = "none", **overrides: Any) -> AttackConfig:
             three_dfed_attack_start_round=0,
             three_dfed_attack_end_round=19,
         ),
+        "adaptive_geochoke": AttackConfig(
+            name="adaptive_geochoke",
+            malicious_client_ids=[1, 2],
+            adaptive_geochoke_target_label=2,
+            adaptive_geochoke_poison_ratio=0.3125,
+            adaptive_geochoke_local_epochs=3,
+            adaptive_geochoke_lr=0.05,
+            adaptive_geochoke_attack_start_round=0,
+            adaptive_geochoke_attack_end_round=19,
+            adaptive_geochoke_align_lambda=1.0,
+            adaptive_geochoke_orth_lambda=4.0,
+            adaptive_geochoke_cfi_lambda=0.0,
+            adaptive_geochoke_proxy_batches=4,
+            adaptive_geochoke_basis_rank=8,
+        ),
     }
     if name not in presets:
         raise ValueError(f"Unknown attack preset: {name}. Available: {sorted(presets)}")
@@ -523,7 +554,7 @@ def validate_config(cfg: ExperimentConfig) -> None:
         raise ValueError(f"malicious_client_ids must be in [0, {cfg.training.num_clients - 1}], got {invalid_clients}")
     if cfg.attack.name == "none" and cfg.attack.malicious_client_ids:
         raise ValueError("malicious_client_ids must be empty when attack.name == 'none'")
-    for prefix in ["neurotoxin", "a3fl", "three_dfed"]:
+    for prefix in ["neurotoxin", "a3fl", "three_dfed", "adaptive_geochoke"]:
         if cfg.attack.name == prefix:
             start = int(getattr(cfg.attack, f"{prefix}_attack_start_round"))
             end = int(getattr(cfg.attack, f"{prefix}_attack_end_round"))
