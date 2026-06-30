@@ -160,6 +160,9 @@ class GeoChokeConfig:
     lambda_: float = 50.0
     gamma: float = 0.01
     rho: float = 0.01
+    ablation_variant: str = "full"
+    cfi_fis_enabled: bool = True
+    precision_control_enabled: bool = True
     tangent_commitment_enabled: bool = True
     tangent_basis_rank: int = 16
     tangent_max_proxy_batches: int = 16
@@ -632,10 +635,43 @@ def mild_geochoke_config(dataset_name: str = "mnist") -> ExperimentConfig:
 #     },
 # )
 
+RQ3_GEOCHOKE_ABLATIONS = {
+    "full": {
+        "ablation_variant": "full",
+        "cfi_fis_enabled": True,
+        "precision_control_enabled": True,
+        "tangent_commitment_enabled": True,
+    },
+    "wo_cfi_fis": {
+        "ablation_variant": "wo_cfi_fis",
+        "cfi_fis_enabled": False,
+        "precision_control_enabled": False,
+        "tangent_commitment_enabled": True,
+    },
+    "wo_proxy_cone": {
+        "ablation_variant": "wo_proxy_cone",
+        "cfi_fis_enabled": True,
+        "precision_control_enabled": True,
+        "tangent_commitment_enabled": False,
+    },
+    "wo_precision_ctrl": {
+        "ablation_variant": "wo_precision_ctrl",
+        "cfi_fis_enabled": True,
+        "precision_control_enabled": False,
+        "tangent_commitment_enabled": True,
+    },
+}
+
+RQ3_DATASET = "fashion_mnist"
+RQ3_ATTACK = "dba_multi"        # Options: dba_multi / neurotoxin / three_dfed / a3fl
+RQ3_VARIANT = "full"            # Options: full / wo_cfi_fis / wo_proxy_cone / wo_precision_ctrl
+
 CONFIG = make_config(
-    dataset="mnist",
-    attack="dba_multi",
+    dataset=RQ3_DATASET,
+    attack=RQ3_ATTACK,
     defense="geochoke_strong",
     scale="standard",
     seed=7,
+    output_dir=f"./outputs_rq3/{RQ3_DATASET}/{RQ3_ATTACK}/{RQ3_VARIANT}",
+    geochoke_overrides=RQ3_GEOCHOKE_ABLATIONS[RQ3_VARIANT],
 )
