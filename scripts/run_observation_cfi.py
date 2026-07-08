@@ -232,8 +232,7 @@ def _build_uploads(clients: list[Client], records_by_client: dict[int, Any], sel
 
 
 def run_observation(args: argparse.Namespace) -> list[dict[str, Any]]:
-    if not args.observation_cfi:
-        raise ValueError("run_observation_cfi.py is an observation entrypoint; pass --observation_cfi to enable logging")
+    # This script is itself the observation entrypoint, so logging is enabled by default.
     if args.attack != "none" and not 0 <= args.attack_start_round <= args.attack_end_round < args.num_rounds:
         raise ValueError("attack schedule must satisfy 0 <= attack_start_round <= attack_end_round < num_rounds")
     if not 0.0 < args.malicious_fraction <= 1.0:
@@ -323,7 +322,7 @@ def run_observation(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Log pre-commit candidate CFI for one encrypted FedAvg/attack run.")
-    parser.add_argument("--observation_cfi", action="store_true")
+    parser.add_argument("--observation_cfi", action="store_true", default=True, help="Kept for compatibility; observation logging is enabled by default for this script.")
     parser.add_argument("--observation_state_type", choices=["benign", "poisoned"], default="benign")
     parser.add_argument("--observation_output_name", default="observation_cfi_curve.csv")
     parser.add_argument("--observation_calibration_dir", default="./outputs_observation/shared_calibration")
