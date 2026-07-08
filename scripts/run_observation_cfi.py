@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import csv
 import math
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -18,6 +17,7 @@ if str(ROOT) not in sys.path:
 from config import CKKS_PROFILES, make_config  # noqa: E402
 from core.client import Client  # noqa: E402
 from core.server import AggregationServer  # noqa: E402
+from core.types import ClientUpload, LocalUpdateRecord  # noqa: E402
 from crypto.update_codec import ModelUpdateCodec  # noqa: E402
 from defenses.geochoke.calibration import ProfileCalibrator  # noqa: E402
 from defenses.geochoke.calibration_provider import CalibrationTensorProvider  # noqa: E402
@@ -36,6 +36,7 @@ _ATTACK_PREFIX = {
     "three_dfed": "three_dfed",
     "a3fl": "a3fl",
 }
+_ATTACK_ACTIVE_KEYS = ("attack_applied_before_encryption", "dba_attack_active", "backdoor_attack_active")
 
 
 class _PreCommitNoDefense:
@@ -120,7 +121,7 @@ def build_observation_config(args: argparse.Namespace, attack_name: str):
     return cfg
 
 
-def _make_clients(cfg: Any, splits: Any, model_factory: Any, codec_factory: Any, crypto_backend: Any, attack: Any) -> list[Client]:
+def _make_clients(cfg: Any, splits: Any, model_factory: Any, codec_factory: Any, crypto_backend: Any, attack: Any, force_clean: bool = False) -> list[Client]:
     return [
         Client(
             client_id=client_id,
@@ -129,15 +130,146 @@ def _make_clients(cfg: Any, splits: Any, model_factory: Any, codec_factory: Any,
             codec_factory=codec_factory,
             crypto_backend=crypto_backend,
             attack_strategy=attack,
-            malicious=client_id in cfg.malicious_client_ids,
+            malicious=False if force_clean else client_id in cfg.malicious_client_ids,
             cfg=cfg,
         )
         for client_id, loader in enumerate(splits.client_loaders)
     ]
 
 
-def _run_state_type(
+def _upload_attack_active(upload: ClientUpload) -> bool:
+    return any(bool(upload.metadata.get(key, False)) for key in _ATTACK_ACTIVE_KEYS) or upload.metadata.get("update_type") == "poisoned"
+
+
+def _attack_activity_metrics(uploads: list[ClientUpload], selected_client_ids: list[int]) -> dict[str, Any]:
+    active_malicious_clients = [upload.client_id for upload in uploads if _upload_attack_active(upload)]
+    poisoned_sample_count = int(sum(upload.metadata.get("poisoned_sample_count", 0) or 0 for upload in uploads))
+    dba_seen_count = int(sum(upload.metadata.get("dba_seen_sample_count", 0) or 0 for upload in uploads))
+    effective_values = [
+        float(upload.metadata["effective_poison_ratio"])
+        for upload in uploads
+        if _upload_attack_active(upload) and upload.metadata.get("effective_poison_ratio") is not None
+    ]
+    if dba_seen_count > 0:
+        effective_poison_ratio = poisoned_sample_count / dba_seen_count
+    elif effective_values:
+        effective_poison_ratio = float(np.mean(effective_values))
+    else:
+        effective_poison_ratio = None
+    return {
+        "attack_active": bool(active_malicious_clients),
+        "active_malicious_clients": active_malicious_clients,
+        "num_malicious_selected": len(active_malicious_clients),
+        "malicious_selected_ratio": len(active_malicious_clients) / max(1, len(selected_client_ids)),
+        "poisoned_sample_count": poisoned_sample_count,
+        "effective_poison_ratio": effective_poison_ratio,
+    }
+
+
+def _compute_uploads(
+    clients: list[Client],
+    selected_client_ids: list[int],
+    records_by_client: dict[int, LocalUpdateRecord],
+    malicious_client_ids: set[int],
+    profile_id: str,
+) -> list[ClientUpload]:
+    observable_updates = [records_by_client[client_id].local_update for client_id in selected_client_ids if client_id not in malicious_client_ids]
+    if not observable_updates:
+        observable_updates = [records_by_client[client_id].local_update for client_id in selected_client_ids]
+    benign_norm_mean = float(np.mean([np.linalg.norm(update) for update in observable_updates])) if observable_updates else 0.0
+    total_samples = sum(records_by_client[client_id].num_samples for client_id in selected_client_ids)
+    uploads: list[ClientUpload] = []
+    for client_id in selected_client_ids:
+        record = records_by_client[client_id]
+        aggregation_weight = record.num_samples / total_samples if total_samples else 0.0
+        attacker_context = {
+            "num_selected": len(selected_client_ids),
+            "num_malicious": sum(1 for selected_id in selected_client_ids if selected_id in malicious_client_ids),
+            "observable_updates": observable_updates,
+            "oracle_all_updates": [records_by_client[selected_id].local_update for selected_id in selected_client_ids],
+            "malicious_weight": aggregation_weight,
+            "benign_selected_update_norm_mean": benign_norm_mean,
+        }
+        uploads.append(clients[client_id].encrypt_update(record, profile_id, attacker_context))
+    return uploads
+
+
+def _candidate_from_uploads(
+    server: AggregationServer,
+    codec: ModelUpdateCodec,
+    model_factory: Any,
+    decryption_service: Any,
+    uploads: list[ClientUpload],
+    profile_id: str,
+    global_state: dict[str, Any],
+):
+    aggregate_ciphertext, _aggregation_time, _weights = server.aggregate_encrypted(uploads)
+    decrypted_update = decryption_service.decrypt_aggregate(aggregate_ciphertext, profile_id)
+    candidate_state = codec.apply_update_to_state_dict(global_state, decrypted_update, step_size=server.cfg.server_lr)
+    candidate_model = model_factory.create()
+    candidate_model.load_state_dict(candidate_state)
+    return candidate_state, candidate_model
+
+
+def _candidate_row(
     cfg: Any,
+    requested_attack: str,
+    driver_update: str,
+    round_id: int,
+    state_type: str,
+    alpha: float,
+    poison_ratio: float,
+    profile_id: str,
+    previous_cfi: float,
+    candidate_cfi: float,
+    benign_candidate_cfi: float,
+    uploads: list[ClientUpload],
+    selected_client_ids: list[int],
+    candidate_model: Any,
+    evaluator: Evaluator,
+    eval_attack: Any,
+    eval_cfg: Any,
+) -> dict[str, Any]:
+    fis = max(0.0, candidate_cfi - previous_cfi)
+    test_loss, clean_test_accuracy = evaluator.evaluate(candidate_model)
+    backdoor_metrics = evaluator.evaluate_backdoor(candidate_model, eval_attack, eval_cfg, profile_id, uploads)
+    activity_metrics = _attack_activity_metrics(uploads, selected_client_ids)
+    row = {
+        "dataset": cfg.dataset_name,
+        "attack": requested_attack,
+        "seed": cfg.seed,
+        "round": round_id,
+        "state_type": state_type,
+        "paired_attack": requested_attack,
+        "driver_update": driver_update,
+        "alpha": alpha,
+        "poison_ratio": poison_ratio,
+        "reference_profile_id": cfg.geochoke.reference_profile_id,
+        "perturbation_count": cfg.geochoke.perturbation_count,
+        "perturbation_scale": cfg.geochoke.perturbation_scale,
+        "current_ckks_profile": profile_id,
+        "previous_cfi": previous_cfi,
+        "candidate_cfi": candidate_cfi,
+        "cfi": candidate_cfi,
+        "fragility_injection_score": fis,
+        "cfi_gap_to_benign_candidate": candidate_cfi - benign_candidate_cfi if state_type == "poisoned" else 0.0,
+        "test_loss": test_loss,
+        "clean_test_accuracy": clean_test_accuracy,
+        "test_accuracy": clean_test_accuracy,
+        "global_trigger_asr": backdoor_metrics.get("global_trigger_asr"),
+        "global_trigger_raw_asr": backdoor_metrics.get("global_trigger_raw_asr"),
+        "global_clean_target_rate": backdoor_metrics.get("global_clean_target_rate"),
+        "num_selected": len(selected_client_ids),
+        **activity_metrics,
+    }
+    for key, value in backdoor_metrics.items():
+        row.setdefault(key, value)
+    return row
+
+
+def _run_paired_observation(
+    benign_cfg: Any,
+    poisoned_cfg: Any,
     splits: Any,
     model_factory: Any,
     crypto_backend: Any,
@@ -145,95 +277,109 @@ def _run_state_type(
     estimator: CFIEstimator,
     evaluator: Evaluator,
     initial_state: dict[str, Any],
-    state_type: str,
     requested_attack: str,
     alpha: float,
     poison_ratio: float,
-    eval_cfg: Any | None = None,
-    eval_attack: Any | None = None,
+    driver_update: str = "benign",
 ) -> list[dict[str, Any]]:
-    attack = create_attack(cfg)
-    eval_cfg = eval_cfg or cfg
-    eval_attack = eval_attack or attack
-    global_model = model_factory.create()
-    global_model.load_state_dict(initial_state)
-    codec = ModelUpdateCodec(global_model)
-    clients = _make_clients(cfg, splits, model_factory, lambda model: ModelUpdateCodec(model), crypto_backend, attack)
-    server = AggregationServer(cfg, global_model, codec, crypto_backend, _PreCommitNoDefense(cfg.geochoke.initial_profile_id), model_factory.create)
+    clean_attack = create_attack(benign_cfg)
+    poisoned_attack = create_attack(poisoned_cfg)
+    clean_clients = _make_clients(benign_cfg, splits, model_factory, lambda model: ModelUpdateCodec(model), crypto_backend, clean_attack, force_clean=True)
+    poisoned_clients = _make_clients(poisoned_cfg, splits, model_factory, lambda model: ModelUpdateCodec(model), crypto_backend, poisoned_attack)
+
+    driver_model = model_factory.create()
+    driver_model.load_state_dict(initial_state)
+    codec = ModelUpdateCodec(driver_model)
+    server = AggregationServer(benign_cfg, driver_model, codec, crypto_backend, _PreCommitNoDefense(benign_cfg.geochoke.initial_profile_id), model_factory.create)
+    profile_id = benign_cfg.geochoke.initial_profile_id
     rows: list[dict[str, Any]] = []
-    profile_id = cfg.geochoke.initial_profile_id
-    for round_id in range(cfg.num_rounds):
+    malicious_client_ids = set(poisoned_cfg.malicious_client_ids)
+
+    for round_id in range(benign_cfg.num_rounds):
         selected_client_ids = server.sample_clients(round_id)
-        malicious_selected = [client_id for client_id in selected_client_ids if client_id in cfg.malicious_client_ids]
         global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
-        local_records = [clients[client_id].compute_local_update(global_state, round_id) for client_id in selected_client_ids]
-        record_by_client = {record.client_id: record for record in local_records}
-        observable_updates = [record_by_client[client_id].local_update for client_id in selected_client_ids if client_id not in cfg.malicious_client_ids]
-        if not observable_updates:
-            observable_updates = [record_by_client[client_id].local_update for client_id in selected_client_ids]
-        benign_norm_mean = float(np.mean([np.linalg.norm(update) for update in observable_updates])) if observable_updates else 0.0
-        total_samples = sum(record.num_samples for record in local_records)
-        uploads = []
+        previous_model = model_factory.create()
+        previous_model.load_state_dict(global_state)
+        previous_cfi = estimator.estimate(previous_model)
+
+        clean_records = [clean_clients[client_id].compute_local_update(global_state, round_id) for client_id in selected_client_ids]
+        clean_records_by_client = {record.client_id: record for record in clean_records}
+        poisoned_records_by_client: dict[int, LocalUpdateRecord] = {}
         for client_id in selected_client_ids:
-            record = record_by_client[client_id]
-            aggregation_weight = record.num_samples / total_samples if total_samples else 0.0
-            attacker_context = {
-                "num_selected": len(selected_client_ids),
-                "num_malicious": len(malicious_selected),
-                "observable_updates": observable_updates,
-                "oracle_all_updates": [record.local_update for record in local_records],
-                "malicious_weight": aggregation_weight,
-                "benign_selected_update_norm_mean": benign_norm_mean,
-            }
-            uploads.append(clients[client_id].encrypt_update(record, profile_id, attacker_context))
-        aggregate_ciphertext, _aggregation_time, _weights = server.aggregate_encrypted(uploads)
-        decrypted_update = decryption_service.decrypt_aggregate(aggregate_ciphertext, profile_id)
-        candidate_state = codec.apply_update_to_state_dict(global_state, decrypted_update, step_size=cfg.server_lr)
-        candidate_model = model_factory.create()
-        candidate_model.load_state_dict(candidate_state)
-        cfi = estimator.estimate(candidate_model)
-        test_loss, test_accuracy = evaluator.evaluate(candidate_model)
-        backdoor_metrics = evaluator.evaluate_backdoor(candidate_model, eval_attack, eval_cfg, profile_id, uploads)
-        global_trigger_asr = backdoor_metrics.get("global_trigger_asr")
-        global_trigger_raw_asr = backdoor_metrics.get("global_trigger_raw_asr")
-        row = {
-            "dataset": cfg.dataset_name,
-            "attack": requested_attack,
-            "seed": cfg.seed,
-            "round": round_id,
-            "state_type": state_type,
-            "alpha": alpha,
-            "poison_ratio": poison_ratio,
-            "cfi": cfi,
-            "reference_profile_id": cfg.geochoke.reference_profile_id,
-            "perturbation_count": cfg.geochoke.perturbation_count,
-            "perturbation_scale": cfg.geochoke.perturbation_scale,
-            "test_loss": test_loss,
-            "test_accuracy": test_accuracy,
-            "clean_test_accuracy": test_accuracy,
-            "global_trigger_asr": global_trigger_asr,
-            "global_trigger_raw_asr": global_trigger_raw_asr,
-            "global_clean_target_rate": backdoor_metrics.get("global_clean_target_rate"),
-            "attack_active": backdoor_metrics.get("attack_active", False),
-            "poisoned_sample_count": backdoor_metrics.get("poisoned_sample_count", 0),
-            "effective_poison_ratio": backdoor_metrics.get("effective_poison_ratio", 0.0),
-        }
-        for key, value in backdoor_metrics.items():
-            row.setdefault(key, value)
-        rows.append(row)
+            if client_id in malicious_client_ids:
+                poisoned_records_by_client[client_id] = poisoned_clients[client_id].compute_local_update(global_state, round_id)
+            else:
+                poisoned_records_by_client[client_id] = clean_records_by_client[client_id]
+
+        clean_uploads = _compute_uploads(clean_clients, selected_client_ids, clean_records_by_client, set(), profile_id)
+        poisoned_uploads = _compute_uploads(poisoned_clients, selected_client_ids, poisoned_records_by_client, malicious_client_ids, profile_id)
+        benign_candidate_state, benign_candidate_model = _candidate_from_uploads(server, codec, model_factory, decryption_service, clean_uploads, profile_id, global_state)
+        poisoned_candidate_state, poisoned_candidate_model = _candidate_from_uploads(server, codec, model_factory, decryption_service, poisoned_uploads, profile_id, global_state)
+
+        benign_candidate_cfi = estimator.estimate(benign_candidate_model)
+        poisoned_candidate_cfi = estimator.estimate(poisoned_candidate_model)
+        benign_row = _candidate_row(
+            benign_cfg,
+            requested_attack,
+            driver_update,
+            round_id,
+            "benign",
+            alpha,
+            poison_ratio,
+            profile_id,
+            previous_cfi,
+            benign_candidate_cfi,
+            benign_candidate_cfi,
+            clean_uploads,
+            selected_client_ids,
+            benign_candidate_model,
+            evaluator,
+            poisoned_attack,
+            poisoned_cfg,
+        )
+        poisoned_row = _candidate_row(
+            poisoned_cfg,
+            requested_attack,
+            driver_update,
+            round_id,
+            "poisoned",
+            alpha,
+            poison_ratio,
+            profile_id,
+            previous_cfi,
+            poisoned_candidate_cfi,
+            benign_candidate_cfi,
+            poisoned_uploads,
+            selected_client_ids,
+            poisoned_candidate_model,
+            evaluator,
+            poisoned_attack,
+            poisoned_cfg,
+        )
+        rows.extend([benign_row, poisoned_row])
         print(
-            "observation "
-            f"state_type={state_type} round={round_id} "
-            f"cfi={cfi:.8g} test_accuracy={test_accuracy:.6f} "
-            f"global_trigger_asr={global_trigger_asr if global_trigger_asr is not None else 'NA'} "
-            f"global_trigger_raw_asr={global_trigger_raw_asr if global_trigger_raw_asr is not None else 'NA'}",
+            "observation_pair "
+            f"round={round_id} driver_update={driver_update} "
+            f"previous_cfi={previous_cfi:.8g} "
+            f"benign_candidate_cfi={benign_candidate_cfi:.8g} "
+            f"poisoned_candidate_cfi={poisoned_candidate_cfi:.8g} "
+            f"benign_fis={benign_row['fragility_injection_score']:.8g} "
+            f"poisoned_fis={poisoned_row['fragility_injection_score']:.8g} "
+            f"benign_acc={benign_row['clean_test_accuracy']:.6f} "
+            f"poisoned_acc={poisoned_row['clean_test_accuracy']:.6f} "
+            f"poisoned_asr={poisoned_row['global_trigger_asr'] if poisoned_row['global_trigger_asr'] is not None else 'NA'}",
             flush=True,
         )
-        server.model.load_state_dict(candidate_state)
+        if driver_update == "poisoned":
+            server.model.load_state_dict(poisoned_candidate_state)
+        else:
+            server.model.load_state_dict(benign_candidate_state)
     return rows
 
 
 def _auroc(benign: np.ndarray, poisoned: np.ndarray) -> float:
+    if benign.size == 0 or poisoned.size == 0:
+        return float("nan")
     scores = np.concatenate([benign, poisoned])
     labels = np.concatenate([np.zeros_like(benign), np.ones_like(poisoned)])
     order = np.argsort(scores, kind="mergesort")
@@ -255,6 +401,8 @@ def _auroc(benign: np.ndarray, poisoned: np.ndarray) -> float:
 
 
 def _ks_statistic(benign: np.ndarray, poisoned: np.ndarray) -> float:
+    if benign.size == 0 or poisoned.size == 0:
+        return float("nan")
     values = np.sort(np.unique(np.concatenate([benign, poisoned])))
     if values.size == 0:
         return float("nan")
@@ -265,57 +413,111 @@ def _ks_statistic(benign: np.ndarray, poisoned: np.ndarray) -> float:
     return float(np.max(np.abs(b_cdf - p_cdf)))
 
 
-def summarize(samples: list[dict[str, Any]]) -> dict[str, Any]:
-    benign = np.array([float(row["cfi"]) for row in samples if row["state_type"] == "benign"], dtype=float)
-    poisoned = np.array([float(row["cfi"]) for row in samples if row["state_type"] == "poisoned"], dtype=float)
+def _metric_stats(benign: np.ndarray, poisoned: np.ndarray, prefix: str) -> dict[str, float]:
     benign_mean = float(np.mean(benign)) if benign.size else float("nan")
     poisoned_mean = float(np.mean(poisoned)) if poisoned.size else float("nan")
     benign_std = float(np.std(benign, ddof=1)) if benign.size > 1 else 0.0
     poisoned_std = float(np.std(poisoned, ddof=1)) if poisoned.size > 1 else 0.0
     pooled = math.sqrt(((benign.size - 1) * benign_std**2 + (poisoned.size - 1) * poisoned_std**2) / max(1, benign.size + poisoned.size - 2))
-    first = samples[0]
     return {
-        "dataset": first["dataset"],
-        "attack": first["attack"],
-        "seed": first["seed"],
-        "benign_mean_cfi": benign_mean,
-        "benign_std_cfi": benign_std,
-        "poisoned_mean_cfi": poisoned_mean,
-        "poisoned_std_cfi": poisoned_std,
-        "cfi_gap": poisoned_mean - benign_mean,
-        "cfi_ratio": poisoned_mean / max(benign_mean, 1e-12),
-        "cohen_d": (poisoned_mean - benign_mean) / max(pooled, 1e-12),
-        "auroc": _auroc(benign, poisoned),
-        "ks_statistic": _ks_statistic(benign, poisoned),
+        f"benign_mean_{prefix}": benign_mean,
+        f"benign_std_{prefix}": benign_std,
+        f"poisoned_mean_{prefix}": poisoned_mean,
+        f"poisoned_std_{prefix}": poisoned_std,
+        f"{prefix}_gap": poisoned_mean - benign_mean,
+        f"{prefix}_ratio": poisoned_mean / max(benign_mean, 1e-12),
+        f"{prefix}_cohen_d": (poisoned_mean - benign_mean) / max(pooled, 1e-12),
+        f"{prefix}_auroc": _auroc(benign, poisoned),
+        f"{prefix}_ks_statistic": _ks_statistic(benign, poisoned),
     }
 
 
-def plot_distribution(samples: list[dict[str, Any]], output_dir: Path) -> None:
+def summarize(samples: list[dict[str, Any]], fallback_samples: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    context = samples or fallback_samples or []
+    if not context:
+        return {}
+    benign_rows = [row for row in samples if row["state_type"] == "benign"]
+    poisoned_rows = [row for row in samples if row["state_type"] == "poisoned"]
+    benign_cfi = np.array([float(row["candidate_cfi"]) for row in benign_rows], dtype=float)
+    poisoned_cfi = np.array([float(row["candidate_cfi"]) for row in poisoned_rows], dtype=float)
+    benign_fis = np.array([float(row["fragility_injection_score"]) for row in benign_rows], dtype=float)
+    poisoned_fis = np.array([float(row["fragility_injection_score"]) for row in poisoned_rows], dtype=float)
+    by_round: dict[int, dict[str, dict[str, Any]]] = {}
+    for row in samples:
+        by_round.setdefault(int(row["round"]), {})[str(row["state_type"])] = row
+    paired_rounds = [pair for pair in by_round.values() if "benign" in pair and "poisoned" in pair]
+    candidate_positive = [float(pair["poisoned"]["candidate_cfi"]) > float(pair["benign"]["candidate_cfi"]) for pair in paired_rounds]
+    fis_positive = [float(pair["poisoned"]["fragility_injection_score"]) > float(pair["benign"]["fragility_injection_score"]) for pair in paired_rounds]
+    first = context[0]
+    summary = {
+        "dataset": first["dataset"],
+        "attack": first["attack"],
+        "seed": first["seed"],
+        "driver_update": first.get("driver_update"),
+        "round_count": len(paired_rounds),
+        "paired_positive_candidate_gap_fraction": float(np.mean(candidate_positive)) if candidate_positive else float("nan"),
+        "paired_positive_fis_gap_fraction": float(np.mean(fis_positive)) if fis_positive else float("nan"),
+        "mean_global_trigger_asr_poisoned": float(np.nanmean([row["global_trigger_asr"] for row in poisoned_rows if row.get("global_trigger_asr") is not None])) if any(row.get("global_trigger_asr") is not None for row in poisoned_rows) else float("nan"),
+        "mean_clean_test_accuracy_benign": float(np.mean([float(row["clean_test_accuracy"]) for row in benign_rows])) if benign_rows else float("nan"),
+        "mean_clean_test_accuracy_poisoned": float(np.mean([float(row["clean_test_accuracy"]) for row in poisoned_rows])) if poisoned_rows else float("nan"),
+    }
+    summary.update(_metric_stats(benign_cfi, poisoned_cfi, "candidate_cfi"))
+    summary.update(_metric_stats(benign_fis, poisoned_fis, "fis"))
+    return summary
+
+
+def _successful_samples(samples: list[dict[str, Any]], min_success_asr: float) -> list[dict[str, Any]]:
+    by_round: dict[int, dict[str, dict[str, Any]]] = {}
+    for row in samples:
+        by_round.setdefault(int(row["round"]), {})[str(row["state_type"])] = row
+    selected: list[dict[str, Any]] = []
+    for pair in by_round.values():
+        poisoned = pair.get("poisoned")
+        if not poisoned:
+            continue
+        asr = poisoned.get("global_trigger_asr")
+        if asr is not None and float(asr) >= min_success_asr:
+            if "benign" in pair:
+                selected.append(pair["benign"])
+            selected.append(poisoned)
+    return selected
+
+
+def _plot_metric_distribution(samples: list[dict[str, Any]], output_dir: Path, metric: str, stem: str, xlabel: str) -> None:
     try:
         import matplotlib.pyplot as plt
     except Exception:
         return
-    benign = np.array([float(row["cfi"]) for row in samples if row["state_type"] == "benign"], dtype=float)
-    poisoned = np.array([float(row["cfi"]) for row in samples if row["state_type"] == "poisoned"], dtype=float)
+    benign = np.array([float(row[metric]) for row in samples if row["state_type"] == "benign"], dtype=float) * 1e8
+    poisoned = np.array([float(row[metric]) for row in samples if row["state_type"] == "poisoned"], dtype=float) * 1e8
+    if benign.size == 0 and poisoned.size == 0:
+        return
     dataset = samples[0]["dataset"]
     attack = samples[0]["attack"]
+    driver_update = samples[0].get("driver_update", "benign")
     plt.style.use("default")
     fig, ax = plt.subplots(figsize=(5.2, 3.4))
-    bins = min(20, max(3, int(math.sqrt(max(len(benign), len(poisoned))))))
+    bins = min(20, max(3, int(math.sqrt(max(len(benign), len(poisoned), 1)))))
     ax.hist(benign, bins=bins, density=True, alpha=0.45, color="0.25", label="benign", edgecolor="white")
     ax.hist(poisoned, bins=bins, density=True, alpha=0.45, color="0.65", label="poisoned", edgecolor="white")
     if benign.size:
         ax.axvline(float(np.mean(benign)), color="0.10", linestyle="--", linewidth=1.2, label="benign mean")
     if poisoned.size:
         ax.axvline(float(np.mean(poisoned)), color="0.45", linestyle="-", linewidth=1.2, label="poisoned mean")
-    ax.set_xlabel("CFI")
+    ax.set_xlabel(xlabel)
     ax.set_ylabel("Density")
-    ax.set_title(f"Observation CFI distribution: {dataset} / {attack}")
+    ax.set_title(f"{dataset} / {attack} / driver={driver_update}")
+    ax.ticklabel_format(axis="x", style="plain", useOffset=False)
     ax.legend(frameon=False, fontsize=8)
     fig.tight_layout()
-    fig.savefig(output_dir / "fig_observation_cfi_distribution.pdf")
-    fig.savefig(output_dir / "fig_observation_cfi_distribution.png", dpi=300)
+    fig.savefig(output_dir / f"{stem}.pdf")
+    fig.savefig(output_dir / f"{stem}.png", dpi=300)
     plt.close(fig)
+
+
+def plot_distributions(samples: list[dict[str, Any]], output_dir: Path) -> None:
+    _plot_metric_distribution(samples, output_dir, "candidate_cfi", "fig_observation_candidate_cfi_distribution", "Candidate CFI (×10^{-8})")
+    _plot_metric_distribution(samples, output_dir, "fragility_injection_score", "fig_observation_fis_distribution", "Fragility Injection Score (×10^{-8})")
 
 
 def run_observation(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -345,34 +547,51 @@ def run_observation(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dic
     _calibration, perturbation_bank = calibrator.calibrate(representative_tensors)
     estimator = CFIEstimator(codec, splits.proxy_loader, perturbation_bank, benign_cfg.device)
     evaluator = Evaluator(splits.test_loader, benign_cfg.device)
-    benign_eval_attack = create_attack(poisoned_cfg)
 
-    benign_rows = _run_state_type(benign_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, evaluator, initial_state, "benign", args.attack, args.alpha, args.poison_ratio, eval_cfg=poisoned_cfg, eval_attack=benign_eval_attack)
-    set_seed(args.seed)
-    poisoned_rows = _run_state_type(poisoned_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, evaluator, initial_state, "poisoned", args.attack, args.alpha, args.poison_ratio)
-    samples = benign_rows + poisoned_rows
+    samples = _run_paired_observation(
+        benign_cfg,
+        poisoned_cfg,
+        splits,
+        model_factory,
+        crypto_bundle.public_backend,
+        crypto_bundle.decryption_service,
+        estimator,
+        evaluator,
+        initial_state,
+        args.attack,
+        args.alpha,
+        args.poison_ratio,
+        driver_update=args.driver_update,
+    )
     summary = summarize(samples)
+    successful_samples = _successful_samples(samples, args.min_success_asr)
+    successful_summary = summarize(successful_samples, fallback_samples=samples)
+    successful_summary["min_success_asr"] = args.min_success_asr
+    successful_summary["successful_round_count"] = int(len({row["round"] for row in successful_samples if row["state_type"] == "poisoned"}))
     _write_csv(output_dir / "observation_cfi_samples.csv", samples)
     _write_csv(output_dir / "observation_cfi_summary.csv", [summary])
-    plot_distribution(samples, output_dir)
+    _write_csv(output_dir / "observation_cfi_summary_successful.csv", [successful_summary])
+    plot_distributions(samples, output_dir)
     return samples, summary
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run pre-commit CFI observation experiment for benign and poisoned candidates.")
+    parser = argparse.ArgumentParser(description="Run paired pre-commit CFI observation experiment for benign and poisoned candidates.")
     parser.add_argument("--dataset", default="fashion_mnist", help="Dataset: fashion_mnist / cifar10 / mnist")
     parser.add_argument("--attack", default="dba_multi", choices=sorted(_ATTACK_PREFIX), help="Backdoor attack for poisoned candidates")
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--num_rounds", type=int, default=80)
+    parser.add_argument("--num_rounds", type=int, default=50)
     parser.add_argument("--alpha", type=float, default=0.5)
-    parser.add_argument("--poison_ratio", type=float, default=0.2)
+    parser.add_argument("--poison_ratio", type=float, default=0.3)
     parser.add_argument("--output_dir", default="./outputs_observation")
+    parser.add_argument("--driver_update", choices=["benign", "poisoned"], default="benign")
+    parser.add_argument("--min_success_asr", type=float, default=0.2)
     parser.add_argument("--num_clients", type=int, default=10, help=argparse.SUPPRESS)
     parser.add_argument("--clients_per_round", type=int, default=10, help=argparse.SUPPRESS)
     parser.add_argument("--min_clients_per_round", type=int, default=2, help=argparse.SUPPRESS)
-    parser.add_argument("--quick_data_limit", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--proxy_size", type=int, default=None, help=argparse.SUPPRESS)
-    parser.add_argument("--test_size", type=int, default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--quick_data_limit", type=int, default=6000, help=argparse.SUPPRESS)
+    parser.add_argument("--proxy_size", type=int, default=256, help=argparse.SUPPRESS)
+    parser.add_argument("--test_size", type=int, default=2000, help=argparse.SUPPRESS)
     parser.add_argument("--calibration_vectors", type=int, default=16, help=argparse.SUPPRESS)
     parser.add_argument("--perturbation_count", type=int, default=16, help=argparse.SUPPRESS)
     parser.add_argument("--perturbation_scale", type=float, default=1.0, help=argparse.SUPPRESS)
@@ -382,7 +601,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> None:
     samples, summary = run_observation(parse_args(argv))
-    print(f"wrote {len(samples)} CFI samples")
+    print(f"wrote {len(samples)} paired CFI sample rows")
     print(summary)
 
 
