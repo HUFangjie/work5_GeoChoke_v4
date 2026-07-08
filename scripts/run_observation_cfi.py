@@ -41,6 +41,10 @@ _BANK_FILE = "observation_perturbation_bank.npz"
 _META_FILE = "observation_calibration_meta.json"
 
 
+def _dimension_bank_file(total_dimension: int) -> str:
+    return f"observation_perturbation_bank_dim{int(total_dimension)}.npz"
+
+
 class _NoCommitDefense:
     def __init__(self, profile_id: str) -> None:
         self.profile_id = profile_id
@@ -132,12 +136,26 @@ def _load_perturbation_bank(path: Path) -> list[np.ndarray]:
     return [payload[key].astype(np.float64, copy=True) for key in sorted(payload.files, key=lambda item: int(item[1:]))]
 
 
+def _bank_matches_dimension(path: Path, total_dimension: int) -> bool:
+    if not path.exists():
+        return False
+    try:
+        bank = _load_perturbation_bank(path)
+    except Exception:
+        return False
+    return bool(bank) and all(perturbation.size == total_dimension for perturbation in bank)
+
+
 def build_or_load_estimator(cfg: Any, model: Any, proxy_loader: Any, crypto_backend: Any, decryption_service: Any, calibration_dir: Path) -> CFIEstimator:
     codec = ModelUpdateCodec(model)
-    bank_path = calibration_dir / _BANK_FILE
+    dimension_bank_path = calibration_dir / _dimension_bank_file(codec.total_dimension)
+    legacy_bank_path = calibration_dir / _BANK_FILE
     meta_path = calibration_dir / _META_FILE
-    if bank_path.exists():
-        perturbation_bank = _load_perturbation_bank(bank_path)
+    if dimension_bank_path.exists():
+        perturbation_bank = _load_perturbation_bank(dimension_bank_path)
+    elif _bank_matches_dimension(legacy_bank_path, codec.total_dimension):
+        perturbation_bank = _load_perturbation_bank(legacy_bank_path)
+        _save_perturbation_bank(dimension_bank_path, perturbation_bank)
     else:
         provider = CalibrationTensorProvider(codec, cfg.geochoke, cfg.device)
         representative_tensors = provider.build(model, proxy_loader)
@@ -149,10 +167,15 @@ def build_or_load_estimator(cfg: Any, model: Any, proxy_loader: Any, crypto_back
             output_dir=str(calibration_dir),
         )
         _calibration, perturbation_bank = calibrator.calibrate(representative_tensors)
-        _save_perturbation_bank(bank_path, perturbation_bank)
+        _save_perturbation_bank(dimension_bank_path, perturbation_bank)
+        _save_perturbation_bank(legacy_bank_path, perturbation_bank)
         meta_path.write_text(
             json.dumps(
                 {
+                    "dataset": cfg.dataset_name,
+                    "model_name": cfg.model_name,
+                    "total_dimension": codec.total_dimension,
+                    "dimension_bank_file": dimension_bank_path.name,
                     "reference_profile_id": cfg.geochoke.reference_profile_id,
                     "calibration_vectors": cfg.geochoke.calibration_vectors,
                     "perturbation_count": cfg.geochoke.perturbation_count,
@@ -160,6 +183,11 @@ def build_or_load_estimator(cfg: Any, model: Any, proxy_loader: Any, crypto_back
                 },
                 indent=2,
             )
+        )
+    if any(perturbation.size != codec.total_dimension for perturbation in perturbation_bank):
+        raise ValueError(
+            "Observation perturbation bank dimension mismatch after load: "
+            f"expected {codec.total_dimension}, got {[p.size for p in perturbation_bank]}"
         )
     return CFIEstimator(codec, proxy_loader, perturbation_bank, cfg.device)
 
