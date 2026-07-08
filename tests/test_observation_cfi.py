@@ -1,50 +1,43 @@
 import csv
-from collections import defaultdict
 
 import tests.test_factories  # registers dummy dataset
 from scripts.run_observation_cfi import parse_args, run_observation
 
 
-def test_observation_cfi_script_outputs_paired_samples(tmp_path):
+def test_observation_cfi_script_outputs_current_run_curve(tmp_path):
+    calibration_dir = tmp_path / "shared_calibration"
     args = parse_args([
+        "--observation_cfi",
+        "--observation_state_type", "poisoned",
         "--dataset", "dummy",
         "--attack", "dba_multi",
         "--seed", "7",
         "--num_rounds", "1",
         "--alpha", "0.5",
         "--poison_ratio", "0.3",
-        "--output_dir", str(tmp_path),
+        "--malicious_fraction", "0.5",
+        "--attack_start_round", "0",
+        "--attack_end_round", "0",
+        "--output_dir", str(tmp_path / "run"),
+        "--observation_calibration_dir", str(calibration_dir),
         "--num_clients", "2",
         "--clients_per_round", "2",
         "--min_clients_per_round", "2",
-        "--calibration_vectors", "1",
-        "--perturbation_count", "1",
-        "--driver_update", "benign",
-        "--warmup_rounds", "0",
-        "--malicious_fraction", "0.5",
-        "--min_success_asr", "0.2",
-        "--max_stealth_acc_drop", "1.0",
+        "--observation_calibration_vectors", "1",
+        "--observation_perturbation_count", "1",
     ])
-    run_observation(args)
-    samples_path = tmp_path / "observation_cfi_samples.csv"
-    all_summary_path = tmp_path / "observation_cfi_summary_all.csv"
-    successful_summary_path = tmp_path / "observation_cfi_summary_successful.csv"
-    assert samples_path.exists()
-    assert all_summary_path.exists()
-    assert successful_summary_path.exists()
-    with samples_path.open(newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    assert rows
-    assert {row["state_type"] for row in rows} == {"benign", "poisoned"}
-    by_round = defaultdict(dict)
-    for row in rows:
-        by_round[int(row["round"])][row["state_type"]] = row
-        assert float(row["candidate_cfi"]) >= 0.0
-        assert float(row["fragility_injection_score"]) >= 0.0
-    for pair in by_round.values():
-        assert set(pair) == {"benign", "poisoned"}
-        benign = pair["benign"]
-        poisoned = pair["poisoned"]
-        for key in ["previous_cfi", "reference_profile_id", "perturbation_count", "perturbation_scale"]:
-            assert benign[key] == poisoned[key]
-        assert int(poisoned["num_malicious_selected"]) > 0
+    rows = run_observation(args)
+    path = tmp_path / "run" / "observation_cfi_curve.csv"
+    assert path.exists()
+    assert (calibration_dir / "observation_perturbation_bank.npz").exists()
+    with path.open(newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert len(rows) == 1
+    assert len(csv_rows) == 1
+    row = csv_rows[0]
+    assert row["state_type"] == "poisoned"
+    assert float(row["candidate_cfi"]) >= 0.0
+    assert row["candidate_cfi"] == row["cfi"]
+    assert "clean_test_accuracy" in row
+    assert "global_trigger_asr" in row
+    assert int(row["num_selected"]) == 2
