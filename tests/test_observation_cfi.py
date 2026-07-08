@@ -20,12 +20,17 @@ def test_observation_cfi_script_outputs_paired_samples(tmp_path):
         "--calibration_vectors", "1",
         "--perturbation_count", "1",
         "--driver_update", "benign",
+        "--warmup_rounds", "0",
+        "--malicious_fraction", "0.5",
         "--min_success_asr", "0.2",
+        "--max_stealth_acc_drop", "1.0",
     ])
     run_observation(args)
     samples_path = tmp_path / "observation_cfi_samples.csv"
+    all_summary_path = tmp_path / "observation_cfi_summary_all.csv"
     successful_summary_path = tmp_path / "observation_cfi_summary_successful.csv"
     assert samples_path.exists()
+    assert all_summary_path.exists()
     assert successful_summary_path.exists()
     with samples_path.open(newline="") as handle:
         rows = list(csv.DictReader(handle))

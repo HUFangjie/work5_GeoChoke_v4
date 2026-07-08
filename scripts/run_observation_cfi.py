@@ -62,16 +62,17 @@ def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def _attack_overrides(attack: str, num_rounds: int, poison_ratio: float, num_clients: int) -> dict[str, Any]:
+def _attack_overrides(attack: str, num_rounds: int, poison_ratio: float, num_clients: int, attack_start_round: int, malicious_fraction: float) -> dict[str, Any]:
     if attack not in _ATTACK_PREFIX:
         raise ValueError(f"Unsupported observation attack: {attack}")
     prefix = _ATTACK_PREFIX[attack]
-    malicious_count = 4 if prefix in {"dba", "three_dfed"} else 2
+    requested_malicious = max(1, int(round(num_clients * malicious_fraction)))
+    malicious_count = min(max(1, num_clients - 1), requested_malicious)
     malicious_ids = list(range(1, min(num_clients, malicious_count + 1)))
     overrides: dict[str, Any] = {
         "malicious_client_ids": malicious_ids,
         f"{prefix}_poison_ratio": poison_ratio,
-        f"{prefix}_attack_start_round": 0,
+        f"{prefix}_attack_start_round": min(max(0, attack_start_round), max(0, num_rounds - 1)),
         f"{prefix}_attack_end_round": max(0, num_rounds - 1),
     }
     if prefix == "dba":
@@ -81,7 +82,11 @@ def _attack_overrides(attack: str, num_rounds: int, poison_ratio: float, num_cli
 
 def build_observation_config(args: argparse.Namespace, attack_name: str):
     num_clients = int(getattr(args, "num_clients", 10))
-    attack_overrides = _attack_overrides(args.attack, args.num_rounds, args.poison_ratio, num_clients) if attack_name != "none" else {"malicious_client_ids": []}
+    attack_overrides = (
+        _attack_overrides(args.attack, args.num_rounds, args.poison_ratio, num_clients, args.warmup_rounds, args.malicious_fraction)
+        if attack_name != "none"
+        else {"malicious_client_ids": []}
+    )
     dataset_overrides = {
         "partition_type": "dirichlet",
         "dirichlet_alpha": args.alpha,
@@ -295,6 +300,7 @@ def _run_paired_observation(
     rows: list[dict[str, Any]] = []
     malicious_client_ids = set(poisoned_cfg.malicious_client_ids)
 
+    warmup_rounds = int(getattr(benign_cfg, "observation_warmup_rounds", 0))
     for round_id in range(benign_cfg.num_rounds):
         selected_client_ids = server.sample_clients(round_id)
         global_state = {name: tensor.detach().cpu().clone() for name, tensor in server.model.state_dict().items()}
@@ -304,6 +310,18 @@ def _run_paired_observation(
 
         clean_records = [clean_clients[client_id].compute_local_update(global_state, round_id) for client_id in selected_client_ids]
         clean_records_by_client = {record.client_id: record for record in clean_records}
+        clean_uploads = _compute_uploads(clean_clients, selected_client_ids, clean_records_by_client, set(), profile_id)
+        benign_candidate_state, benign_candidate_model = _candidate_from_uploads(server, codec, model_factory, decryption_service, clean_uploads, profile_id, global_state)
+        if round_id < warmup_rounds:
+            server.model.load_state_dict(benign_candidate_state)
+            print(
+                "observation_warmup "
+                f"round={round_id} driver_update=benign "
+                f"previous_cfi={previous_cfi:.8g}",
+                flush=True,
+            )
+            continue
+
         poisoned_records_by_client: dict[int, LocalUpdateRecord] = {}
         for client_id in selected_client_ids:
             if client_id in malicious_client_ids:
@@ -311,9 +329,7 @@ def _run_paired_observation(
             else:
                 poisoned_records_by_client[client_id] = clean_records_by_client[client_id]
 
-        clean_uploads = _compute_uploads(clean_clients, selected_client_ids, clean_records_by_client, set(), profile_id)
         poisoned_uploads = _compute_uploads(poisoned_clients, selected_client_ids, poisoned_records_by_client, malicious_client_ids, profile_id)
-        benign_candidate_state, benign_candidate_model = _candidate_from_uploads(server, codec, model_factory, decryption_service, clean_uploads, profile_id, global_state)
         poisoned_candidate_state, poisoned_candidate_model = _candidate_from_uploads(server, codec, model_factory, decryption_service, poisoned_uploads, profile_id, global_state)
 
         benign_candidate_cfi = estimator.estimate(benign_candidate_model)
@@ -466,7 +482,7 @@ def summarize(samples: list[dict[str, Any]], fallback_samples: list[dict[str, An
     return summary
 
 
-def _successful_samples(samples: list[dict[str, Any]], min_success_asr: float) -> list[dict[str, Any]]:
+def _stealth_successful_samples(samples: list[dict[str, Any]], min_success_asr: float, max_stealth_acc_drop: float) -> list[dict[str, Any]]:
     by_round: dict[int, dict[str, dict[str, Any]]] = {}
     for row in samples:
         by_round.setdefault(int(row["round"]), {})[str(row["state_type"])] = row
@@ -475,10 +491,13 @@ def _successful_samples(samples: list[dict[str, Any]], min_success_asr: float) -
         poisoned = pair.get("poisoned")
         if not poisoned:
             continue
+        benign = pair.get("benign")
         asr = poisoned.get("global_trigger_asr")
-        if asr is not None and float(asr) >= min_success_asr:
-            if "benign" in pair:
-                selected.append(pair["benign"])
+        if not benign or asr is None:
+            continue
+        clean_drop = float(benign["clean_test_accuracy"]) - float(poisoned["clean_test_accuracy"])
+        if bool(poisoned.get("attack_active", False)) and float(asr) >= min_success_asr and clean_drop <= max_stealth_acc_drop:
+            selected.append(benign)
             selected.append(poisoned)
     return selected
 
@@ -523,9 +542,15 @@ def plot_distributions(samples: list[dict[str, Any]], output_dir: Path) -> None:
 def run_observation(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    if args.warmup_rounds < 0 or args.warmup_rounds >= args.num_rounds:
+        raise ValueError("--warmup_rounds must satisfy 0 <= warmup_rounds < num_rounds")
+    if not 0.0 < args.malicious_fraction <= 1.0:
+        raise ValueError("--malicious_fraction must satisfy 0.0 < malicious_fraction <= 1.0")
     set_seed(args.seed)
     benign_cfg = build_observation_config(args, "none")
     poisoned_cfg = build_observation_config(args, args.attack)
+    benign_cfg.observation_warmup_rounds = args.warmup_rounds
+    poisoned_cfg.observation_warmup_rounds = args.warmup_rounds
     dataset_provider = create_dataset_provider(benign_cfg)
     splits = dataset_provider.build()
     model_factory = create_model_factory(benign_cfg)
@@ -563,16 +588,22 @@ def run_observation(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dic
         args.poison_ratio,
         driver_update=args.driver_update,
     )
-    summary = summarize(samples)
-    successful_samples = _successful_samples(samples, args.min_success_asr)
-    successful_summary = summarize(successful_samples, fallback_samples=samples)
-    successful_summary["min_success_asr"] = args.min_success_asr
-    successful_summary["successful_round_count"] = int(len({row["round"] for row in successful_samples if row["state_type"] == "poisoned"}))
+    all_round_summary = summarize(samples)
+    stealth_successful_samples = _stealth_successful_samples(samples, args.min_success_asr, args.max_stealth_acc_drop)
+    stealth_successful_summary = summarize(stealth_successful_samples, fallback_samples=samples)
+    stealth_successful_summary["min_success_asr"] = args.min_success_asr
+    stealth_successful_summary["max_stealth_acc_drop"] = args.max_stealth_acc_drop
+    stealth_successful_summary["warmup_rounds"] = args.warmup_rounds
+    stealth_successful_summary["malicious_fraction"] = args.malicious_fraction
+    stealth_successful_summary["stealth_successful_round_count"] = int(len({row["round"] for row in stealth_successful_samples if row["state_type"] == "poisoned"}))
+    all_round_summary["warmup_rounds"] = args.warmup_rounds
+    all_round_summary["malicious_fraction"] = args.malicious_fraction
     _write_csv(output_dir / "observation_cfi_samples.csv", samples)
-    _write_csv(output_dir / "observation_cfi_summary.csv", [summary])
-    _write_csv(output_dir / "observation_cfi_summary_successful.csv", [successful_summary])
+    _write_csv(output_dir / "observation_cfi_summary_all.csv", [all_round_summary])
+    _write_csv(output_dir / "observation_cfi_summary.csv", [stealth_successful_summary])
+    _write_csv(output_dir / "observation_cfi_summary_successful.csv", [stealth_successful_summary])
     plot_distributions(samples, output_dir)
-    return samples, summary
+    return samples, stealth_successful_summary
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -580,12 +611,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dataset", default="fashion_mnist", help="Dataset: fashion_mnist / cifar10 / mnist")
     parser.add_argument("--attack", default="dba_multi", choices=sorted(_ATTACK_PREFIX), help="Backdoor attack for poisoned candidates")
     parser.add_argument("--seed", type=int, default=7)
-    parser.add_argument("--num_rounds", type=int, default=50)
+    parser.add_argument("--num_rounds", type=int, default=100)
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--poison_ratio", type=float, default=0.3)
     parser.add_argument("--output_dir", default="./outputs_observation")
     parser.add_argument("--driver_update", choices=["benign", "poisoned"], default="benign")
+    parser.add_argument("--warmup_rounds", type=int, default=20)
+    parser.add_argument("--malicious_fraction", type=float, default=0.2)
     parser.add_argument("--min_success_asr", type=float, default=0.2)
+    parser.add_argument("--max_stealth_acc_drop", type=float, default=0.05)
     parser.add_argument("--num_clients", type=int, default=10, help=argparse.SUPPRESS)
     parser.add_argument("--clients_per_round", type=int, default=10, help=argparse.SUPPRESS)
     parser.add_argument("--min_clients_per_round", type=int, default=2, help=argparse.SUPPRESS)
