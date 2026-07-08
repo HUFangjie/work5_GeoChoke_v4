@@ -27,6 +27,8 @@ def test_observation_cfi_script_outputs_samples(tmp_path):
     assert rows
     assert {row["state_type"] for row in rows} == {"benign", "poisoned"}
     assert all(float(row["cfi"]) >= 0.0 for row in rows)
+    assert all("test_accuracy" in row for row in rows)
+    assert all("global_trigger_asr" in row for row in rows)
     assert {row["reference_profile_id"] for row in rows} == {samples[0]["reference_profile_id"]}
     assert {row["perturbation_count"] for row in rows} == {str(samples[0]["perturbation_count"])}
     assert {row["perturbation_scale"] for row in rows} == {str(samples[0]["perturbation_scale"])}

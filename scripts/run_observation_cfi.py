@@ -22,6 +22,7 @@ from crypto.update_codec import ModelUpdateCodec  # noqa: E402
 from defenses.geochoke.calibration import ProfileCalibrator  # noqa: E402
 from defenses.geochoke.calibration_provider import CalibrationTensorProvider  # noqa: E402
 from defenses.geochoke.cfi_estimator import CFIEstimator  # noqa: E402
+from evaluation.evaluator import Evaluator  # noqa: E402
 from factories.attack_factory import create_attack  # noqa: E402
 from factories.crypto_factory import create_crypto_backend  # noqa: E402
 from factories.dataset_factory import create_dataset_provider  # noqa: E402
@@ -142,13 +143,18 @@ def _run_state_type(
     crypto_backend: Any,
     decryption_service: Any,
     estimator: CFIEstimator,
+    evaluator: Evaluator,
     initial_state: dict[str, Any],
     state_type: str,
     requested_attack: str,
     alpha: float,
     poison_ratio: float,
+    eval_cfg: Any | None = None,
+    eval_attack: Any | None = None,
 ) -> list[dict[str, Any]]:
     attack = create_attack(cfg)
+    eval_cfg = eval_cfg or cfg
+    eval_attack = eval_attack or attack
     global_model = model_factory.create()
     global_model.load_state_dict(initial_state)
     codec = ModelUpdateCodec(global_model)
@@ -186,20 +192,42 @@ def _run_state_type(
         candidate_model = model_factory.create()
         candidate_model.load_state_dict(candidate_state)
         cfi = estimator.estimate(candidate_model)
-        rows.append(
-            {
-                "dataset": cfg.dataset_name,
-                "attack": requested_attack,
-                "seed": cfg.seed,
-                "round": round_id,
-                "state_type": state_type,
-                "alpha": alpha,
-                "poison_ratio": poison_ratio,
-                "cfi": cfi,
-                "reference_profile_id": cfg.geochoke.reference_profile_id,
-                "perturbation_count": cfg.geochoke.perturbation_count,
-                "perturbation_scale": cfg.geochoke.perturbation_scale,
-            }
+        test_loss, test_accuracy = evaluator.evaluate(candidate_model)
+        backdoor_metrics = evaluator.evaluate_backdoor(candidate_model, eval_attack, eval_cfg, profile_id, uploads)
+        global_trigger_asr = backdoor_metrics.get("global_trigger_asr")
+        global_trigger_raw_asr = backdoor_metrics.get("global_trigger_raw_asr")
+        row = {
+            "dataset": cfg.dataset_name,
+            "attack": requested_attack,
+            "seed": cfg.seed,
+            "round": round_id,
+            "state_type": state_type,
+            "alpha": alpha,
+            "poison_ratio": poison_ratio,
+            "cfi": cfi,
+            "reference_profile_id": cfg.geochoke.reference_profile_id,
+            "perturbation_count": cfg.geochoke.perturbation_count,
+            "perturbation_scale": cfg.geochoke.perturbation_scale,
+            "test_loss": test_loss,
+            "test_accuracy": test_accuracy,
+            "clean_test_accuracy": test_accuracy,
+            "global_trigger_asr": global_trigger_asr,
+            "global_trigger_raw_asr": global_trigger_raw_asr,
+            "global_clean_target_rate": backdoor_metrics.get("global_clean_target_rate"),
+            "attack_active": backdoor_metrics.get("attack_active", False),
+            "poisoned_sample_count": backdoor_metrics.get("poisoned_sample_count", 0),
+            "effective_poison_ratio": backdoor_metrics.get("effective_poison_ratio", 0.0),
+        }
+        for key, value in backdoor_metrics.items():
+            row.setdefault(key, value)
+        rows.append(row)
+        print(
+            "observation "
+            f"state_type={state_type} round={round_id} "
+            f"cfi={cfi:.8g} test_accuracy={test_accuracy:.6f} "
+            f"global_trigger_asr={global_trigger_asr if global_trigger_asr is not None else 'NA'} "
+            f"global_trigger_raw_asr={global_trigger_raw_asr if global_trigger_raw_asr is not None else 'NA'}",
+            flush=True,
         )
         server.model.load_state_dict(candidate_state)
     return rows
@@ -316,10 +344,12 @@ def run_observation(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dic
     )
     _calibration, perturbation_bank = calibrator.calibrate(representative_tensors)
     estimator = CFIEstimator(codec, splits.proxy_loader, perturbation_bank, benign_cfg.device)
+    evaluator = Evaluator(splits.test_loader, benign_cfg.device)
+    benign_eval_attack = create_attack(poisoned_cfg)
 
-    benign_rows = _run_state_type(benign_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, initial_state, "benign", args.attack, args.alpha, args.poison_ratio)
+    benign_rows = _run_state_type(benign_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, evaluator, initial_state, "benign", args.attack, args.alpha, args.poison_ratio, eval_cfg=poisoned_cfg, eval_attack=benign_eval_attack)
     set_seed(args.seed)
-    poisoned_rows = _run_state_type(poisoned_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, initial_state, "poisoned", args.attack, args.alpha, args.poison_ratio)
+    poisoned_rows = _run_state_type(poisoned_cfg, splits, model_factory, crypto_bundle.public_backend, crypto_bundle.decryption_service, estimator, evaluator, initial_state, "poisoned", args.attack, args.alpha, args.poison_ratio)
     samples = benign_rows + poisoned_rows
     summary = summarize(samples)
     _write_csv(output_dir / "observation_cfi_samples.csv", samples)
